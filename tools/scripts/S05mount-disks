@@ -1,0 +1,11 @@
+#!/bin/bash
+
+echo 'Mounting disks' >> /tmp/mount-disks.log
+mkdir -p /mnt
+mkdir -p /mnt{2,3,4}
+chmod -R 777 /mnt*
+[ -r /dev/xvdb ] && mkfs.ext4 /dev/xvdb && mount /dev/xvdb /mnt
+[ -r /dev/xvdc ] && mkfs.ext4 /dev/xvdc && mount /dev/xvdc /mnt2
+[ -r /dev/xvdd ] && mkfs.ext4 /dev/xvdd && mount /dev/xvdd /mnt3
+[ -r /dev/xvde ] && mkfs.ext4 /dev/xvde && mount /dev/xvde /mnt4
+
