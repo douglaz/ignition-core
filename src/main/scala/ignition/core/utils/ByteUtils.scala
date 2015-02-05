@@ -10,7 +10,6 @@ object ByteUtils {
   }
 
   def toString(bytes: Array[Byte], encoding: String): String = {
-    val decoder = Charset.forName(encoding).newDecoder
     toString(bytes, 0, bytes.length, encoding)
   }
 
