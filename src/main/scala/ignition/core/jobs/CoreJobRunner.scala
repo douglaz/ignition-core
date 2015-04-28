@@ -11,6 +11,13 @@ object CoreJobRunner {
                            config: RunnerConfig)
 
 
+  // Used to provide contextual logging
+  def setLoggingContextValues(config: RunnerConfig): Unit = {
+    org.slf4j.MDC.put("setupName", config.setupName)
+    org.slf4j.MDC.put("tag", config.tag)
+    org.slf4j.MDC.put("user", config.user)
+  }
+
   case class RunnerConfig(setupName: String = "nosetup",
                           date: DateTime = DateTime.now.withZone(DateTimeZone.UTC),
                           tag: String = "notag",
@@ -67,9 +74,16 @@ object CoreJobRunner {
       defaultSparkConfMap.foreach { case (k, v) => sparkConf.set(k, v) }
 
       jobConf.foreach { case (k, v) => sparkConf.set(k, v) }
-
+      
       val sc = new SparkContext(sparkConf)
 
+      // Add logging context to driver
+      setLoggingContextValues(config)
+
+      // Also try to propagate logging context to workers
+      // TODO: find a more efficient and bullet-proof way
+      val configBroadCast = sc.broadcast(config)
+      sc.parallelize(Range(1, 2000), numSlices = 2000).foreachPartition(_ => setLoggingContextValues(configBroadCast.value))
 
       val context = RunnerContext(sc, config)
 
