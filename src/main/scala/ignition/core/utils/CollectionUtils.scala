@@ -103,4 +103,10 @@ object CollectionUtils {
         .toList
     }
   }
+
+
+  implicit class CollectionMap[K, V <: TraversableOnce[Any]](map: Map[K, V]) {
+    def removeEmpty(): Map[K, V] =
+      map.filter { case (k, v) => v.nonEmpty }
+  }
 }

@@ -84,7 +84,7 @@ object RDDUtils {
       rdd.aggregateByKey(List.empty[V])(
         (lst, v) =>
           if (lst.size >= n) {
-            logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger then n = '$n'")
+            logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger than n=$n")
             lst
           } else {
             v :: lst
