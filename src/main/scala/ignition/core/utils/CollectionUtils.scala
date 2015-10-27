@@ -22,6 +22,12 @@ object CollectionUtils {
     }
   }
 
+
+
+  implicit class TraversableOnceLong(xs: TraversableOnce[Long]) {
+    def toBag(): IntBag = IntBag.from(xs)
+  }
+
   implicit class TraversableLikeImprovements[A, Repr](xs: TraversableLike[A, Repr]) {
     def distinctBy[B, That](f: A => B)(implicit cbf: CanBuildFrom[Repr, A, That]) = {
       val builder = cbf(xs.repr)
@@ -102,5 +108,11 @@ object CollectionUtils {
         .mapValues(_.map { case (k, v) => v }.reduce(fn))
         .toList
     }
+  }
+
+
+  implicit class CollectionMap[K, V <: TraversableOnce[Any]](map: Map[K, V]) {
+    def removeEmpty(): Map[K, V] =
+      map.filter { case (k, v) => v.nonEmpty }
   }
 }

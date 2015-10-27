@@ -1,13 +1,32 @@
 package ignition.core.utils
 
-import scala.concurrent.{ExecutionContext, Future, Promise}
-import scala.util.{Failure, Success}
+import scala.concurrent.{ExecutionContext, Future, Promise, blocking, future}
+import scala.util.control.NonFatal
+import scala.util.{Failure, Success, Try}
 
 object FutureUtils {
+
+  def blockingFuture[T](body: =>T)(implicit ec: ExecutionContext): Future[T] = future { blocking { body } }
 
   implicit class FutureImprovements[V](future: Future[V]) {
     def toOptionOnFailure(errorHandler: (Throwable) => Option[V])(implicit ec: ExecutionContext): Future[Option[V]] = {
       future.map(Option.apply).recover { case t => errorHandler(t) }
+    }
+
+    /**
+     * Appear to be redundant. But its the only way to map a future with
+     * Success and Failure in same algorithm without split it to use map/recover
+     * or transform.
+     *
+     * future.asTry.map { case Success(v) => 1; case Failure(e) => 0 }
+     *
+     * instead
+     *
+     * future.map(i=>1).recover(case _: Exception => 0)
+     *
+     */
+    def asTry()(implicit ec: ExecutionContext) : Future[Try[V]] = {
+      future.map(v => Success(v)).recover { case NonFatal(e) => Failure(e) }
     }
   }
 
