@@ -38,7 +38,9 @@ script_path = os.path.dirname(os.path.realpath(__file__))
 default_instance_type = 'r3.xlarge'
 default_spot_price = '0.10'
 default_worker_instances = '1'
+default_executor_instances = '1'
 default_master_instance_type = 'm3.xlarge'
+default_driver_heap_size = '12G'
 default_region = 'us-east-1'
 default_zone = default_region + 'b'
 default_key_id = 'ignition_key'
@@ -46,16 +48,19 @@ default_key_file = os.path.expanduser('~/.ssh/ignition_key.pem')
 default_ami = None # will be decided based on spark-ec2 list
 default_master_ami = None
 default_env = 'dev'
-default_spark_version = '1.3.0'
+default_spark_version = '1.5.1'
+custom_builds = {
+#    '1.5.1': 'https://s3.amazonaws.com/chaordic-ignition-public/spark-1.5.1-bin-cdh4.7.1.tgz'
+}
 default_spark_repo = 'https://github.com/chaordic/spark'
 default_remote_user = 'ec2-user'
 default_remote_control_dir = '/tmp/Ignition'
 default_collect_results_dir = '/tmp'
-default_user_data = os.path.join(script_path, 'scripts', 'S05mount-disks')
+default_user_data = os.path.join(script_path, 'scripts', 'noop')
 default_defaults_filename = 'cluster_defaults.json'
 
 default_spark_ec2_git_repo = 'https://github.com/chaordic/spark-ec2'
-default_spark_ec2_git_branch = 'v4-yarn'
+default_spark_ec2_git_branch = 'branch-1.4-merge'
 
 
 master_post_create_commands = [
@@ -201,14 +206,16 @@ def launch(cluster_name, slaves,
            tag=[],
            key_id=default_key_id, region=default_region,
            zone=default_zone, instance_type=default_instance_type,
-           ondemand=False, spot_price=default_spot_price,
+           ondemand=False, spot_price=default_spot_price, master_spot=False,
            user_data=default_user_data,
            security_group = None,
            vpc = None,
            vpc_subnet = None,
            master_instance_type=default_master_instance_type,
            wait_time='180', hadoop_major_version='2',
-           worker_instances=default_worker_instances, retries_on_same_cluster=5,
+           worker_instances=default_worker_instances,
+           executor_instances=default_executor_instances,
+           retries_on_same_cluster=5,
            max_clusters_to_create=5,
            minimum_percentage_healthy_slaves=0.9,
            remote_user=default_remote_user,
@@ -251,8 +258,12 @@ def launch(cluster_name, slaves,
             ])
 
         spot_params = ['--spot-price', spot_price] if not ondemand else []
+        master_spot_params = ['--master-spot'] if not ondemand and master_spot else []
+
         ami_params = ['--ami', ami] if ami else []
         master_ami_params = ['--master-ami', master_ami] if master_ami else []
+
+        spark_version = custom_builds.get(spark_version, spark_version)
 
         for i in range(retries_on_same_cluster):
             log.info('Running script, try %d of %d', i + 1, retries_on_same_cluster)
@@ -269,12 +280,14 @@ def launch(cluster_name, slaves,
                                  '--spark-ec2-git-repo', spark_ec2_git_repo,
                                  '--spark-ec2-git-branch', spark_ec2_git_branch,
                                  '--worker-instances', worker_instances,
+                                 '--executor-instances', executor_instances,
                                  '--master-opts', '-Dspark.worker.timeout={0}'.format(worker_timeout),
                                  '--spark-git-repo', spark_repo,
                                  '-v', spark_version,
                                  '--user-data', user_data,
                                  'launch', cluster_name] +
                                 spot_params +
+                                master_spot_params +
                                 resume_param +
                                 auth_params +
                                 ami_params +
@@ -309,7 +322,7 @@ def launch(cluster_name, slaves,
     raise CommandError('Failed to created cluster {} after failures'.format(cluster_name))
 
 
-def destroy(cluster_name, delete_groups=False, region=default_region):
+def destroy(cluster_name, delete_groups=True, region=default_region):
     delete_sg_param = ['--delete-groups'] if delete_groups else []
 
     ec2_script_path = chdir_to_ec2_script_and_get_path()
@@ -372,7 +385,9 @@ def job_run(cluster_name, job_name, job_mem,
             disable_assembly_build=False,
             run_tests=False,
             kill_on_failure=False,
-            destroy_cluster=False, region=default_region):
+            destroy_cluster=False,
+            region=default_region,
+            driver_heap_size=default_driver_heap_size):
 
     utc_job_date_example = '2014-05-04T13:13:10Z'
     if utc_job_date and len(utc_job_date) != len(utc_job_date_example):
@@ -393,10 +408,10 @@ def job_run(cluster_name, job_name, job_mem,
     job_date = utc_job_date or datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
     job_tag = job_tag or job_date.replace(':', '_').replace('-', '_').replace('Z', 'UTC')
     tmux_wait_command = ';(echo Press enter to keep the session open && /bin/bash -c "read -t 5" && sleep 7d)' if not detached else ''
-    tmux_arg = ". /etc/profile; . ~/.profile;tmux new-session {detached} -s spark.{job_name}.{job_tag} '{aws_vars} {remote_hook} {job_name} {job_date} {job_tag} {job_user} {remote_control_dir} {spark_mem} {yarn_param} {notify_param} {tmux_wait_command}' >& /tmp/commandoutput".format(
-        aws_vars=get_aws_keys_str(), job_name=job_name, job_date=job_date, job_tag=job_tag, job_user=job_user, remote_control_dir=remote_control_dir, remote_hook=remote_hook, spark_mem=job_mem, detached='-d' if detached else '', yarn_param=yarn_param, notify_param=notify_param, tmux_wait_command=tmux_wait_command)
-    non_tmux_arg = ". /etc/profile; . ~/.profile;{aws_vars} {remote_hook} {job_name} {job_date} {job_tag} {job_user} {remote_control_dir} {spark_mem} {yarn_param} {notify_param} >& /tmp/commandoutput".format(
-        aws_vars=get_aws_keys_str(), job_name=job_name, job_date=job_date, job_tag=job_tag, job_user=job_user, remote_control_dir=remote_control_dir, remote_hook=remote_hook, spark_mem=job_mem, yarn_param=yarn_param, notify_param=notify_param)
+    tmux_arg = ". /etc/profile; . ~/.profile;tmux new-session {detached} -s spark.{job_name}.{job_tag} '{aws_vars} {remote_hook} {job_name} {job_date} {job_tag} {job_user} {remote_control_dir} {spark_mem} {yarn_param} {notify_param} {driver_heap_size} {tmux_wait_command}' >& /tmp/commandoutput".format(
+        aws_vars=get_aws_keys_str(), job_name=job_name, job_date=job_date, job_tag=job_tag, job_user=job_user, remote_control_dir=remote_control_dir, remote_hook=remote_hook, spark_mem=job_mem, detached='-d' if detached else '', yarn_param=yarn_param, notify_param=notify_param, driver_heap_size=driver_heap_size, tmux_wait_command=tmux_wait_command)
+    non_tmux_arg = ". /etc/profile; . ~/.profile;{aws_vars} {remote_hook} {job_name} {job_date} {job_tag} {job_user} {remote_control_dir} {spark_mem} {yarn_param} {notify_param} {driver_heap_size} >& /tmp/commandoutput".format(
+        aws_vars=get_aws_keys_str(), job_name=job_name, job_date=job_date, job_tag=job_tag, job_user=job_user, remote_control_dir=remote_control_dir, remote_hook=remote_hook, spark_mem=job_mem, yarn_param=yarn_param, notify_param=notify_param, driver_heap_size=driver_heap_size)
 
 
     if not disable_assembly_build:
