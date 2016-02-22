@@ -80,11 +80,15 @@ object RDDUtils {
       }, preservesPartitioning = true)
     }
 
+    def collectValues[U: ClassTag](f: PartialFunction[V, U]): RDD[(K, U)] = {
+      rdd.filter { case (k, v) => f.isDefinedAt(v) }.mapValues(f)
+    }
+
     def groupByKeyAndTake(n: Int): RDD[(K, List[V])] =
       rdd.aggregateByKey(List.empty[V])(
         (lst, v) =>
           if (lst.size >= n) {
-            logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger then n = '$n'")
+            logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger than n=$n")
             lst
           } else {
             v :: lst
