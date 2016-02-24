@@ -57,6 +57,8 @@ object RDDUtils {
     def incrementCounterIf(cond: (V) => Boolean, acc: spark.Accumulator[Int]): RDD[V] = {
       rdd.map(x => { if (cond(x)) acc += 1; x })
     }
+
+    def filterNot(p: V => Boolean): RDD[V] = rdd.filter(!p(_))
   }
 
   implicit class PairRDDImprovements[K: ClassTag, V: ClassTag](rdd: RDD[(K, V)]) {
@@ -80,11 +82,15 @@ object RDDUtils {
       }, preservesPartitioning = true)
     }
 
+    def collectValues[U: ClassTag](f: PartialFunction[V, U]): RDD[(K, U)] = {
+      rdd.filter { case (k, v) => f.isDefinedAt(v) }.mapValues(f)
+    }
+
     def groupByKeyAndTake(n: Int): RDD[(K, List[V])] =
       rdd.aggregateByKey(List.empty[V])(
         (lst, v) =>
           if (lst.size >= n) {
-            logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger then n = '$n'")
+            logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger than n=$n")
             lst
           } else {
             v :: lst
