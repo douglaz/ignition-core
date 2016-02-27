@@ -28,3 +28,6 @@ project/plugins/project/
 
 # Node
 node_modules
+
+# Spark-ec2 boto
+tools/spark-ec2/lib
