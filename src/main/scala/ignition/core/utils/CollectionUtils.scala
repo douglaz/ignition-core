@@ -6,7 +6,36 @@ import scalaz.Validation
 
 object CollectionUtils {
 
+
+
+  implicit class SeqImprovements[A](xs: Seq[A]) {
+    def orElseIfEmpty[B >: A](alternative: => Seq[B]): Seq[B] = {
+      if (xs.nonEmpty)
+        xs
+      else
+        alternative
+    }
+    
+    def mostFrequentOption: Option[A] = {
+      xs.groupBy(identity).maxByOption(_._2.size).map(_._1)
+    }
+  }
+
   implicit class TraversableOnceImprovements[A](xs: TraversableOnce[A]) {
+    def maxOption(implicit cmp: Ordering[A]): Option[A] = {
+      if (xs.isEmpty)
+        None
+      else
+        Option(xs.max)
+    }
+
+    def minOption(implicit cmp: Ordering[A]): Option[A] = {
+      if (xs.isEmpty)
+        None
+      else
+        Option(xs.min)
+    }
+
     def maxByOption[B](f: A => B)(implicit cmp: Ordering[B]): Option[A] = {
       if (xs.isEmpty)
         None
@@ -20,6 +49,13 @@ object CollectionUtils {
       else
         Option(xs.minBy(f))
     }
+    
+  }
+
+
+
+  implicit class TraversableOnceLong(xs: TraversableOnce[Long]) {
+    def toBag(): IntBag = IntBag.from(xs)
   }
 
   implicit class TraversableLikeImprovements[A, Repr](xs: TraversableLike[A, Repr]) {
@@ -58,6 +94,7 @@ object CollectionUtils {
       }
       builder.result
     }
+
 
   }
 
@@ -102,5 +139,11 @@ object CollectionUtils {
         .mapValues(_.map { case (k, v) => v }.reduce(fn))
         .toList
     }
+  }
+
+
+  implicit class CollectionMap[K, V <: TraversableOnce[Any]](map: Map[K, V]) {
+    def removeEmpty(): Map[K, V] =
+      map.filter { case (k, v) => v.nonEmpty }
   }
 }

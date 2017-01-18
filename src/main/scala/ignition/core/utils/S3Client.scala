@@ -3,7 +3,7 @@ package ignition.core.utils
 import java.util.Properties
 
 import org.jets3t.service.impl.rest.httpclient.RestS3Service
-import org.jets3t.service.model.S3Object
+import org.jets3t.service.model.{S3Object, StorageObject}
 import org.jets3t.service.security.AWSCredentials
 import org.jets3t.service.{Constants, Jets3tProperties}
 
@@ -26,9 +26,9 @@ class S3Client {
     null, null, jets3tProperties
   )
 
-  def writeContent(bucket: String, key: String, content: String): S3Object = {
+  def writeContent(bucket: String, key: String, content: String, contentType: String = "text/plain"): S3Object = {
     val obj = new S3Object(key, content)
-    obj.setContentType("text/plain")
+    obj.setContentType(contentType)
     service.putObject(bucket, obj)
   }
 
@@ -36,8 +36,19 @@ class S3Client {
     service.getObject(bucket, key, null, null, null, null, null, null)
   }
 
-  def list(bucket: String, key: String): Array[S3Object] = {
-    service.listObjects(bucket, key, null, 99999L)
+  def list(bucket: String, key: String): Array[StorageObject] = {
+    service.listObjectsChunked(bucket, key, null, 99999L, null, true).getObjects
+  }
+
+  def copyFile(sourceBucket: String, sourceKey: String,
+               destBucket: String, destKey: String,
+               destContentType: Option[String] = None,
+               destContentEncoding: Option[String] = None): Unit = {
+    val destFile = new S3Object(destKey)
+    val replaceMetaData = destContentType.isDefined || destContentEncoding.isDefined
+    destContentEncoding.foreach(encoding => destFile.setContentEncoding(encoding))
+    destContentType.foreach(contentType => destFile.setContentType(contentType))
+    service.copyObject(sourceBucket, sourceKey, destBucket, destFile, replaceMetaData)
   }
 
   def fileExists(bucket: String, key: String): Boolean = {

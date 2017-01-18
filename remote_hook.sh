@@ -11,6 +11,7 @@ CONTROL_DIR="${5?Please give the Control Directory}"
 SPARK_MEM_PARAM="${6?Please give the Job Memory Size to use}"
 USE_YARN="${7?Please tell if we should use YARN (yes/no)}"
 NOTIFY_ON_ERRORS="${8?Please tell if we will notify on errors (yes/no)}"
+DRIVER_HEAP_SIZE="${9?Please tell driver heap size to use}"
 
 JOB_WITH_TAG=${JOB_NAME}.${JOB_TAG}
 JOB_CONTROL_DIR="${CONTROL_DIR}/${JOB_WITH_TAG}"
@@ -20,9 +21,14 @@ MY_USER=$(whoami)
 sudo mkdir -p "${JOB_CONTROL_DIR}"
 sudo chown $MY_USER "${JOB_CONTROL_DIR}"
 
-
 RUNNING_FILE="${JOB_CONTROL_DIR}/RUNNING"
+# This should be the first thing in the script to avoid the wait remote job thinking we died
 echo $$ > "${RUNNING_FILE}"
+
+
+
+# Let us read the spark home even when the image doesn't give us the permission
+sudo chmod -R o+rx /root
 
 notify_error_and_exit() {
     description="${1}"
@@ -46,6 +52,23 @@ get_first_present() {
 on_trap_exit() {
     rm -f "${JOB_CONTROL_DIR}"/*.jar
     rm -f "${RUNNING_FILE}"
+}
+
+install_and_run_zeppelin() {
+    if [[ ! -d "zeppelin" ]]; then
+        wget "http://www.us.apache.org/dist/incubator/zeppelin/0.5.6-incubating/zeppelin-0.5.6-incubating-bin-all.tgz" -O zeppelin.tar.gz
+        mkdir zeppelin
+        tar xvzf zeppelin.tar.gz -C zeppelin --strip-components 1 > /tmp/zeppelin_install.log
+    fi
+    if [[ -f "zeppelin/bin/zeppelin.sh" ]]; then
+        export MASTER="${JOB_MASTER}"
+        export ZEPPELIN_PORT="8081"
+        export SPARK_HOME="/root/spark"
+        export SPARK_SUBMIT_OPTIONS="--jars ${JAR_PATH} --runner-executor-memory ${SPARK_MEM_PARAM}"
+        sudo -E zeppelin/bin/zeppelin.sh
+    else
+        notify_error_and_exit "Zepellin installation not found"
+    fi
 }
 
 
@@ -73,14 +96,14 @@ if [[ "${USE_YARN}" == "yes" ]]; then
     export SPARK_WORKER_MEMORY=${SPARK_MEM_PARAM}
 fi
 
-
 if [[ "${JOB_NAME}" == "shell" ]]; then
-    export ADD_JARS=${JAR_PATH}
-    sudo -E ${SPARK_HOME}/bin/spark-shell || notify_error_and_exit "Execution failed for shell"
+    sudo -E ${SPARK_HOME}/bin/spark-shell --jars ${JAR_PATH} --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/mnt -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --executor-memory "${SPARK_MEM_PARAM}" || notify_error_and_exit "Execution failed for shell"
+elif [[ "${JOB_NAME}" == "zeppelin" ]]; then
+    install_and_run_zeppelin
 else
     JOB_OUTPUT="${JOB_CONTROL_DIR}/output.log"
     tail -F "${JOB_OUTPUT}" &
-    sudo -E "${SPARK_HOME}/bin/spark-submit" --master "${JOB_MASTER}" --driver-memory 25000M --driver-java-options "-Djava.io.tmpdir=/mnt -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --class "${MAIN_CLASS}" ${JAR_PATH} "${JOB_NAME}" --runner-date "${JOB_DATE}" --runner-tag "${JOB_TAG}" --runner-user "${JOB_USER}" --runner-master "${JOB_MASTER}" --runner-executor-memory "${SPARK_MEM_PARAM}" >& "${JOB_OUTPUT}" || notify_error_and_exit "Execution failed for job ${JOB_WITH_TAG}"
+    sudo -E "${SPARK_HOME}/bin/spark-submit" --master "${JOB_MASTER}" --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/mnt -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --class "${MAIN_CLASS}" ${JAR_PATH} "${JOB_NAME}" --runner-date "${JOB_DATE}" --runner-tag "${JOB_TAG}" --runner-user "${JOB_USER}" --runner-master "${JOB_MASTER}" --runner-executor-memory "${SPARK_MEM_PARAM}" >& "${JOB_OUTPUT}" || notify_error_and_exit "Execution failed for job ${JOB_WITH_TAG}"
 fi
 
 touch "${JOB_CONTROL_DIR}/SUCCESS"

@@ -3,13 +3,15 @@ package ignition.core.jobs.utils
 import org.slf4j.LoggerFactory
 
 import scala.reflect._
-import org.apache.spark.rdd.{PairRDDFunctions, CoGroupedRDD, RDD}
+import org.apache.spark.rdd.{CoGroupedRDD, PairRDDFunctions, RDD}
 import org.apache.spark.SparkContext._
 import org.apache.spark.Partitioner
 import org.apache.spark
 import org.joda.time.DateTime
 import org.joda.time.format.DateTimeFormat
 
+import scala.collection.mutable
+import scala.util.Random
 import scalaz.{Success, Validation}
 
 object RDDUtils {
@@ -24,6 +26,12 @@ object RDDUtils {
   }
 
   implicit class SeqRDDImprovements[V: ClassTag](rdd: RDD[Seq[V]]) {
+    def flatten: RDD[V] = {
+      rdd.flatMap(x => x)
+    }
+  }
+
+  implicit class SetRDDImprovements[V: ClassTag](rdd: RDD[Set[V]]) {
     def flatten: RDD[V] = {
       rdd.flatMap(x => x)
     }
@@ -50,23 +58,10 @@ object RDDUtils {
   }
 
   implicit class RDDImprovements[V: ClassTag](rdd: RDD[V]) {
-    def incrementCounter(acc: spark.Accumulator[Int]): RDD[V] = {
-      rdd.map(x => { acc += 1; x })
-    }
-
-    def incrementCounterIf(cond: (V) => Boolean, acc: spark.Accumulator[Int]): RDD[V] = {
-      rdd.map(x => { if (cond(x)) acc += 1; x })
-    }
+    def filterNot(p: V => Boolean): RDD[V] = rdd.filter(!p(_))
   }
 
   implicit class PairRDDImprovements[K: ClassTag, V: ClassTag](rdd: RDD[(K, V)]) {
-    def incrementCounter(acc: spark.Accumulator[Int]): RDD[(K, V)] = {
-      rdd.mapValues(x => { acc += 1; x })
-    }
-
-    def incrementCounterIf(cond: (K, V) => Boolean, acc: spark.Accumulator[Int]): RDD[(K, V)] = {
-      rdd.mapPreservingPartitions(x => { if(cond(x._1, x._2)) acc += 1; x._2 })
-    }
 
     def flatMapPreservingPartitions[U: ClassTag](f: ((K, V)) => Seq[U]): RDD[(K, U)] = {
       rdd.mapPartitions[(K, U)](kvs => {
@@ -80,14 +75,22 @@ object RDDUtils {
       }, preservesPartitioning = true)
     }
 
-    def groupByKeyAndTake(n: Int): RDD[(K, List[V])] =
-      rdd.aggregateByKey(List.empty[V])(
+    def collectValues[U: ClassTag](f: PartialFunction[V, U]): RDD[(K, U)] = {
+      rdd.filter { case (k, v) => f.isDefinedAt(v) }.mapValues(f)
+    }
+
+    // loggingFactor: percentage of the potential logging that will be really printed
+    // Big jobs will have too much logging and my eat up cluster disk space
+    def groupByKeyAndTake(n: Int, loggingFactor: Double = 0.5): RDD[(K, List[V])] =
+      rdd.aggregateByKey(mutable.ListBuffer.empty[V])(
         (lst, v) =>
           if (lst.size >= n) {
-            logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger then n = '$n'")
+            if (Random.nextDouble() < loggingFactor)
+              logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger than n=$n")
             lst
           } else {
-            v :: lst
+            lst += v
+            lst
           },
         (lstA, lstB) =>
           if (lstA.size >= n)
@@ -96,12 +99,16 @@ object RDDUtils {
             lstB
           else {
             if (lstA.size + lstB.size > n) {
-              logger.warn(s"Merging partition1=${lstA.size} with partition2=${lstB.size} and taking the first n=$n, sample1='${lstA.take(5)}', sample2='${lstB.take(5)}'")
-              (lstA ++ lstB).take(n)
-            } else
-              lstA ++ lstB
+              if (Random.nextDouble() < loggingFactor)
+                logger.warn(s"Merging partition1=${lstA.size} with partition2=${lstB.size} and taking the first n=$n, sample1='${lstA.take(5)}', sample2='${lstB.take(5)}'")
+              lstA ++= lstB
+              lstA.take(n)
+            } else {
+              lstA ++= lstB
+              lstA
+            }
           }
-      )
+      ).mapValues(_.toList)
 
     // Note: completely unoptimized. We could use instead for better performance:
     // 1) sortByKey

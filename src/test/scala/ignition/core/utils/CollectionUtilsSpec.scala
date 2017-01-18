@@ -3,7 +3,7 @@ package ignition.core.utils
 import org.scalatest._
 import CollectionUtils._
 
-class CollectionUtilsSpec extends FlatSpec with ShouldMatchers {
+class CollectionUtilsSpec extends FlatSpec with Matchers {
 
   case class MyObj(property: String, value: String)
   "CollectionUtils" should "provide distinctBy" in {
@@ -32,7 +32,23 @@ class CollectionUtilsSpec extends FlatSpec with ShouldMatchers {
     list.compressBy(_.value) shouldBe List(MyObj("p1", "v1"), MyObj("p1", "v2"))
   }
 
+  it should "provide orElseIfEmpty" in {
+    Seq.empty[String].orElseIfEmpty(Seq("something")) shouldBe Seq("something")
+    Seq("not empty").orElseIfEmpty(Seq("something")) shouldBe Seq("not empty")
+  }
 
+  it should "provide maxOption and minOption" in {
+    Seq.empty[Int].maxOption shouldBe None
+    Seq(1, 3, 2).maxOption shouldBe Some(3)
+
+    Seq.empty[Int].minOption shouldBe None
+    Seq(1, 3, 2).minOption shouldBe Some(1)
+  }
+
+  it should "provide mostFrequentOption" in {
+    Seq.empty[String].mostFrequentOption shouldBe None
+    Seq("a", "b", "b", "c", "a", "b").mostFrequentOption shouldBe Option("b")
+  }
 
 
 }
