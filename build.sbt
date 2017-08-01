@@ -2,7 +2,7 @@ name := "Ignition-Core"
 
 version := "1.0"
 
-scalaVersion := "2.11.11"
+scalaVersion := "2.11.8"
 
 scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-Xfatal-warnings", "-Xlint", "-Ywarn-dead-code", "-Xmax-classfile-name", "130")
 
@@ -34,15 +34,15 @@ libraryDependencies += "commons-lang" % "commons-lang" % "2.6"
 
 libraryDependencies += "org.slf4j" % "slf4j-api" % "1.7.25"
 
-libraryDependencies += "com.typesafe.akka" %% "akka-actor" % "2.5.3"
+libraryDependencies += "com.typesafe.akka" %% "akka-actor" % "2.3.4"
 
-libraryDependencies += "io.spray" %% "spray-json" % "1.3.3"
+libraryDependencies += "io.spray" %% "spray-json" % "1.3.2"
 
-libraryDependencies += "io.spray" %% "spray-client" % "1.3.4"
+libraryDependencies += "io.spray" %% "spray-client" % "1.3.2"
 
-libraryDependencies += "io.spray" %% "spray-http" % "1.3.4"
+libraryDependencies += "io.spray" %% "spray-http" % "1.3.2"
 
-libraryDependencies += "io.spray" %% "spray-caching" % "1.3.4"
+libraryDependencies += "io.spray" %% "spray-caching" % "1.3.2"
 
 resolvers += "Akka Repository" at "http://repo.akka.io/releases/"
 
