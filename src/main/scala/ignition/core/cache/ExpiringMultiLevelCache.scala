@@ -414,7 +414,18 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
           case None =>
             // There are no remote RW caches
             logger.error(s"canonicalValueGenerator, key $key: failed to generate value and no remote cache configured", eLocal)
-            Future.failed(eLocal)
+            eLocal match {
+              case NonFatal(e) => {
+                // if error was nonFatal (404) then saves it to cache
+                // TODO: check if it is actually a 4XX error, or something else
+                // TODO: handle 5XX errors as well?
+                val timestampedValue = timestamp(status4XX = true, status5XX = false, error = e)
+                // Saved it only in localCache
+                localCache.foreach(_.set(key, timestampedValue))
+                Future.failed(eLocal)
+              }
+              case _ => Future.failed(eLocal)
+            }
           case Some(remote) =>
             remoteGetNonExpiredValue(key, remote, nanoStartTime).asTry().flatMap {
               case Success(v) =>
@@ -432,9 +443,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
                     remoteSetOrGet(key, timestampedValue, remote, nanoStartTime)
                     Future.failed(eLocal)
                   }
-                  case _ => {
-                    Future.failed(eLocal)
-                  }
+                  case _ => Future.failed(eLocal)
                 }
             }
         }

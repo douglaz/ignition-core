@@ -31,4 +31,33 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
       failure shouldBe a [MyException]
     }
   }
+
+  it should "calculate a value on cache miss just once, the second call should be from cache hit" in {
+    var myFailedRequestCount: Int = 0
+
+    // TODO: Throw a 404 error
+    class MyException(s: String) extends ArithmeticException(s) // Some NonFatal Exception
+    def myFailedRequest(): Future[Nothing] = {
+      println("calling myFailedRequest()")
+      myFailedRequestCount = myFailedRequestCount + 1
+      Future.failed(new MyException("some failure"))
+    }
+
+    val local = new ExpiringLruLocalCache[TimestampedValue[Data]](100)
+    val cache = ExpiringMultiLevelCache[Data](1.minute, Option(local))
+
+    val eventualCache = cache("key", myFailedRequest)
+    whenReady(eventualCache.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 1
+    }
+
+    val eventualCache2 = cache("key", myFailedRequest)
+    whenReady(eventualCache2.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 1
+    }
+
+  }
+
 }
