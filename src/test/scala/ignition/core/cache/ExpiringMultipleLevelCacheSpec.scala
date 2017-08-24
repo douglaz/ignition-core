@@ -1,5 +1,7 @@
 package ignition.core.cache
 
+import java.io.FileNotFoundException
+
 import akka.actor.ActorSystem
 import ignition.core.cache.ExpiringMultiLevelCache.TimestampedValue
 import org.scalatest.concurrent.ScalaFutures
@@ -35,8 +37,7 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
   it should "calculate a value on cache miss just once, the second call should be from cache hit" in {
     var myFailedRequestCount: Int = 0
 
-    // TODO: Throw a 404 error
-    class MyException(s: String) extends ArithmeticException(s) // Some NonFatal Exception
+    class MyException(s: String) extends FileNotFoundException(s) // Some NonFatal Exception
     def myFailedRequest(): Future[Nothing] = {
       println("calling myFailedRequest()")
       myFailedRequestCount = myFailedRequestCount + 1
@@ -54,6 +55,24 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
 
     val eventualCache2 = cache("key", myFailedRequest)
     whenReady(eventualCache2.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 1
+    }
+
+    val eventualCache3 = cache("key", myFailedRequest)
+    whenReady(eventualCache3.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 1
+    }
+
+    val eventualCache4 = cache("key", myFailedRequest)
+    whenReady(eventualCache4.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 1
+    }
+
+    val eventualCache5 = cache("key", myFailedRequest)
+    whenReady(eventualCache5.failed) { failure =>
       failure shouldBe a [MyException]
       myFailedRequestCount shouldBe 1
     }
