@@ -39,13 +39,12 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
 
     class MyException(s: String) extends FileNotFoundException(s) // Some NonFatal Exception
     def myFailedRequest(): Future[Nothing] = {
-      println("calling myFailedRequest()")
       myFailedRequestCount = myFailedRequestCount + 1
       Future.failed(new MyException("some failure"))
     }
 
     val local = new ExpiringLruLocalCache[TimestampedValue[Data]](100)
-    val cache = ExpiringMultiLevelCache[Data](1.minute, Option(local))
+    val cache = ExpiringMultiLevelCache[Data](ttl = 1.minute, localCache = Option(local), cacheErrors = true, ttlCachedErrors = 9.seconds)
 
     val eventualCache = cache("key", myFailedRequest)
     whenReady(eventualCache.failed) { failure =>
@@ -78,5 +77,98 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
     }
 
   }
+
+  it should "calculate a value on cache miss on every request" in {
+    var myFailedRequestCount: Int = 0
+
+    class MyException(s: String) extends FileNotFoundException(s) // Some NonFatal Exception
+    def myFailedRequest(): Future[Nothing] = {
+      myFailedRequestCount = myFailedRequestCount + 1
+      Future.failed(new MyException("some failure"))
+    }
+
+    val local = new ExpiringLruLocalCache[TimestampedValue[Data]](100)
+    val cache = ExpiringMultiLevelCache[Data](ttl = 1.minute, localCache = Option(local), cacheErrors = false)
+
+    val eventualCache = cache("key", myFailedRequest)
+    whenReady(eventualCache.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 1
+    }
+
+    val eventualCache2 = cache("key", myFailedRequest)
+    whenReady(eventualCache2.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 2
+    }
+
+    val eventualCache3 = cache("key", myFailedRequest)
+    whenReady(eventualCache3.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 3
+    }
+
+    val eventualCache4 = cache("key", myFailedRequest)
+    whenReady(eventualCache4.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 4
+    }
+
+    val eventualCache5 = cache("key", myFailedRequest)
+    whenReady(eventualCache5.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 5
+    }
+
+  }
+
+  it should "calculate a value on cache miss, then wait ttlCachedError to get a cache miss again" in {
+    var myFailedRequestCount: Int = 0
+
+    class MyException(s: String) extends FileNotFoundException(s) // Some NonFatal Exception
+    def myFailedRequest(): Future[Nothing] = {
+      myFailedRequestCount = myFailedRequestCount + 1
+      Future.failed(new MyException("some failure"))
+    }
+
+    val local = new ExpiringLruLocalCache[TimestampedValue[Data]](100)
+    val cache = ExpiringMultiLevelCache[Data](ttl = 1.minute, localCache = Option(local), cacheErrors = true, ttlCachedErrors = 9.seconds)
+
+    val eventualCache = cache("key", myFailedRequest)
+    whenReady(eventualCache.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 1
+    }
+
+    val eventualCache2 = cache("key", myFailedRequest)
+    whenReady(eventualCache2.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 1
+    }
+
+    Thread.sleep(10000)
+
+    val eventualCache3 = cache("key", myFailedRequest)
+    whenReady(eventualCache3.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 2
+    }
+
+    val eventualCache4 = cache("key", myFailedRequest)
+    whenReady(eventualCache4.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 2
+    }
+
+    Thread.sleep(1000)
+
+    val eventualCache5 = cache("key", myFailedRequest)
+    whenReady(eventualCache5.failed) { failure =>
+      failure shouldBe a [MyException]
+      myFailedRequestCount shouldBe 2
+    }
+
+  }
+
 
 }

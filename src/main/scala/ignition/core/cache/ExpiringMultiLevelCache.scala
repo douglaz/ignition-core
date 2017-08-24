@@ -19,12 +19,14 @@ import scala.util.{Failure, Success, Try}
 object ExpiringMultiLevelCache {
   case class TimestampedValue[V](date: DateTime,
                                  value: Option[V] = None,
-                                 status4XX: Boolean = false,
-                                 status5XX: Boolean = false,
-                                 error: Option[Throwable] = None) {
-    def hasExpired(ttl: FiniteDuration, now: DateTime): Boolean = {
-      // TODO: Cached Error should have little ttl
-      date.plus(ttl.toMillis).isBefore(now)
+                                 hasError: Boolean = false,
+                                 throwable: Option[Throwable] = None) {
+    def hasExpired(ttl: FiniteDuration, now: DateTime, ttlCachedErrors: FiniteDuration = 1.minute): Boolean = {
+      if (!hasError) {
+        date.plus(ttl.toMillis).isBefore(now)
+      } else {
+        date.plus(ttlCachedErrors.toMillis).isBefore(now)
+      }
     }
     def getValue: V = {
       this.value match {
@@ -129,7 +131,9 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
                                       maxErrorsToRetryOnRemote: Int = 5,
                                       backoffOnLockAcquire: FiniteDuration = 50.milliseconds,
                                       backoffOnError: FiniteDuration = 50.milliseconds,
-                                      sanityLocalValueCheck: Boolean = false) extends GenericCache[V] {
+                                      sanityLocalValueCheck: Boolean = false,
+                                      cacheErrors: Boolean = false,
+                                      ttlCachedErrors: FiniteDuration = 1.minute) extends GenericCache[V] {
 
   private val logger = LoggerFactory.getLogger(getClass)
 
@@ -141,26 +145,19 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
 
   private def timestamp(v: V) = TimestampedValue(date = now, value = Some(v))
 
-  private def timestamp(status4XX: Boolean, status5XX: Boolean, error: Throwable): TimestampedValue[V] = {
-    TimestampedValue(value = None, date = now, status4XX = status4XX, status5XX = status5XX, error = Some(error))
+  private def timestamp(hasError: Boolean, throwable: Throwable): TimestampedValue[V] = {
+    TimestampedValue(value = None, date = now, hasError = hasError, throwable = Some(throwable))
   }
 
   private def elapsedTime(startNanoTime: Long) = FiniteDuration(System.nanoTime() - startNanoTime, TimeUnit.NANOSECONDS)
 
   private def remoteLockKey(key: Any) = s"$key-emlc-lock"
 
-  case class SavedErrorCache(ttl: FiniteDuration = 1.minutes,
-                             status4XX: Boolean = false,
-                             status5XX: Boolean = false,
-                             error: Throwable)
-
-  case class CustomException(private val message: String = "", private val cause: Throwable = None.orNull) extends Exception(message, cause)
-
   private def checkSavedErrorCache(key: String, genValue: () => Future[V], startTime: Long, v: TimestampedValue[V]): Future[V] = {
     val promise = Promise[V]()
     val future = promise.future
-    if (v.status4XX || v.status5XX) {
-      promise.tryFailure(v.error.getOrElse(None.orNull))
+    if (v.hasError) {
+      promise.tryFailure(v.throwable.getOrElse(None.orNull))
     }
     else {
       promise.trySuccess(v.getValue)
@@ -177,7 +174,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
     val result: Future[V] = localCache.flatMap(_.get(key).map(_.asTry())) match {
       case Some(future) =>
         future.flatMap {
-          case Success(localValue) if !localValue.hasExpired(ttl, now) =>
+          case Success(localValue) if !localValue.hasExpired(ttl, now, ttlCachedErrors) =>
             // We have locally a good value, just return it
             reporter.onLocalCacheHit(key, elapsedTime(startTime))
             // But if we're paranoid, let's check if the local value is consistent with remote
@@ -189,7 +186,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
           case Success(expiredLocalValue) if remoteRW.nonEmpty =>
             // We have locally an expired value, but we can check a remote cache for better value
             remoteRW.get.get(key).asTry().flatMap {
-              case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
+              case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now, ttlCachedErrors) =>
                 // Remote is good, set locally and return it
                 reporter.onRemoteCacheHit(key, elapsedTime(startTime))
                 localCache.foreach(_.set(key, remoteValue))
@@ -231,7 +228,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
       case None if remoteRW.nonEmpty =>
         // No local, let's try remote
         remoteRW.get.get(key).asTry().flatMap {
-          case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
+          case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now, ttlCachedErrors) =>
             // Remote is good, set locally and return it
             reporter.onRemoteCacheHit(key, elapsedTime(startTime))
             localCache.foreach(_.set(key, remoteValue))
@@ -311,8 +308,8 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
           "same-date-on-utc"
         else
           "impossible-dates"
-        val remoteExpired = remoteValue.hasExpired(ttl, now)
-        val localExpired = localValue.hasExpired(ttl, now)
+        val remoteExpired = remoteValue.hasExpired(ttl, now, ttlCachedErrors)
+        val localExpired = localValue.hasExpired(ttl, now, ttlCachedErrors)
         val finalResult = s"$valuesResult-$dateResult-remote-expired-${remoteExpired}-local-expired-${localExpired}"
         logger.warn(s"sanityLocalValueCheck, key $key: got different results for local $localValue and remote $remoteValue ($finalResult)")
         reporter.onSanityLocalValueCheckFailedResult(key, finalResult, elapsedTime(startTime))
@@ -320,7 +317,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
         // We can even get a SavedErrorCache
         checkSavedErrorCache(key, genValue, startTime, remoteValue)
       case Success(None) =>
-        val localExpired = localValue.hasExpired(ttl, now)
+        val localExpired = localValue.hasExpired(ttl, now, ttlCachedErrors)
         val finalResult = s"missing-remote-local-expired-${localExpired}"
         logger.warn(s"sanityLocalValueCheck, key $key: got local $localValue but no remote ($finalResult)")
         reporter.onSanityLocalValueCheckFailedResult(key, finalResult, elapsedTime(startTime))
@@ -363,7 +360,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
       case null =>
         logger.info(s"tryGenerateAndSet, key $key: got request for generating and none in progress found, calling canonicalValueGenerator")
         canonicalValueGenerator(key, genValue, nanoStartTime).onComplete {
-          case Success(v) if !v.hasExpired(ttl, now) =>
+          case Success(v) if !v.hasExpired(ttl, now, ttlCachedErrors) =>
             reporter.onGeneratedWithSuccess(key, elapsedTime(nanoStartTime))
             localCache.foreach(_.set(key, v))
             promise.trySuccess(v)
@@ -416,12 +413,12 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
             logger.error(s"canonicalValueGenerator, key $key: failed to generate value and no remote cache configured", eLocal)
             eLocal match {
               case NonFatal(e) => {
-                // if error was nonFatal (404) then saves it to cache
-                // TODO: check if it is actually a 4XX error, or something else
-                // TODO: handle 5XX errors as well?
-                val timestampedValue = timestamp(status4XX = true, status5XX = false, error = e)
-                // Saved it only in localCache
-                localCache.foreach(_.set(key, timestampedValue))
+                if (cacheErrors) {
+                  // if error was NonFatal Error then saves it to cache
+                  val timestampedValue = timestamp(hasError = true, throwable = e)
+                  // Saved it only in localCache
+                  localCache.foreach(_.set(key, timestampedValue))
+                }
                 Future.failed(eLocal)
               }
               case _ => Future.failed(eLocal)
@@ -436,11 +433,11 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
                 logger.error(s"canonicalValueGenerator, key $key: failed to generate value and failed to get remote", eLocal)
                 eLocal match {
                   case NonFatal(e) => {
-                    // if error was nonFatal (404) then saves it to cache
-                    // TODO: check if it is actually a 4XX error, or something else
-                    // TODO: handle 5XX errors as well?
-                    val timestampedValue = timestamp(status4XX = true, status5XX = false, error = e)
-                    remoteSetOrGet(key, timestampedValue, remote, nanoStartTime)
+                    if (cacheErrors) {
+                      // if error was NonFatal Error then saves it to cache
+                      val timestampedValue = timestamp(hasError = true, throwable = e)
+                      remoteSetOrGet(key, timestampedValue, remote, nanoStartTime)
+                    }
                     Future.failed(eLocal)
                   }
                   case _ => Future.failed(eLocal)
@@ -457,7 +454,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
                                        nanoStartTime: Long,
                                        currentRetry: Int = 0)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[TimestampedValue[V]] = {
     remote.get(key).asTry().flatMap {
-      case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
+      case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now, ttlCachedErrors) =>
         logger.info(s"remoteGetNonExpiredValue, key $key: got a good value")
         Future.successful(remoteValue)
       case Success(_) =>
@@ -496,7 +493,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
           logger.info(s"remoteSetOrGet got lock for key $key")
           // Lock acquired, get the current value and replace it
           remote.get(key).asTry().flatMap {
-            case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
+            case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now, ttlCachedErrors) =>
               // Current value is good, just return it
               reporter.onRemoteCacheHitAfterGenerating(key, elapsedTime(nanoStartTime))
               logger.info(s"remoteSetOrGet got lock for $key but found already a good value on remote")
@@ -529,7 +526,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
         case Success(false) =>
           // Someone got the lock, let's take a look at the value
           remote.get(key).asTry().flatMap {
-            case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
+            case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now, ttlCachedErrors) =>
               // Current value is good, just return it
               logger.info(s"remoteSetOrGet couldn't lock key $key but found a good on remote afterwards")
               reporter.onRemoteCacheHitAfterGenerating(key, elapsedTime(nanoStartTime))
