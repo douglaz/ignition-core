@@ -34,6 +34,30 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
     }
   }
 
+  it should "calculate a value on cache miss after ttl" in {
+    var myRequestCount: Int = 0
+
+    def myRequest(): Future[Data] = {
+      myRequestCount = myRequestCount + 1
+      Future.successful(Data("success"))
+    }
+
+    val local = new ExpiringLruLocalCache[TimestampedValue[Data]](100)
+    val cache = ExpiringMultiLevelCache[Data](ttl = 9.seconds, localCache = Option(local))
+
+    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
+    myRequestCount shouldBe 1
+    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
+    myRequestCount shouldBe 1
+
+    Thread.sleep(10000)
+
+    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
+    myRequestCount shouldBe 2
+    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
+    myRequestCount shouldBe 2
+  }
+
   it should "calculate a value on cache miss just once, the second call should be from cache hit" in {
     var myFailedRequestCount: Int = 0
 
@@ -169,6 +193,5 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
     }
 
   }
-
 
 }
