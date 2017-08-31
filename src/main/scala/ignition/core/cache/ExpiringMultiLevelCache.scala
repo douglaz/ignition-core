@@ -156,9 +156,9 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
             reporter.onLocalCacheHit(key, elapsedTime(startTime))
             // But if we're paranoid, let's check if the local value is consistent with remote
             if (sanityLocalValueCheck)
-              remoteRW.map(remote => sanityLocalValueCheck(key, localValue, remote, genValue, startTime)).getOrElse(Future.successful(localValue.value.get))
+              remoteRW.map(remote => sanityLocalValueCheck(key, localValue, remote, genValue, startTime)).getOrElse(Future.fromTry(localValue.value))
             else
-              Future.successful(localValue.value.get)
+              Future.fromTry(localValue.value)
           case Success(expiredLocalValue) if remoteRW.nonEmpty =>
             // We have locally an expired value, but we can check a remote cache for better value
             remoteRW.get.get(key).asTry().flatMap {
@@ -166,35 +166,39 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
                 // Remote is good, set locally and return it
                 reporter.onRemoteCacheHit(key, elapsedTime(startTime))
                 localCache.foreach(_.set(key, remoteValue))
-                Future.successful(remoteValue.value.get)
+                Future.fromTry(remoteValue.value)
               case Success(Some(expiredRemote)) =>
                 // Expired local and expired remote, return the most recent of them, async update both
                 reporter.onCacheMissButFoundExpiredRemote(key, elapsedTime(startTime))
                 tryGenerateAndSet(key, genValue, startTime)
                 val mostRecent = Set(expiredLocalValue, expiredRemote).maxBy(_.date)
-                Future.successful(mostRecent.value.get)
+                Future.fromTry(mostRecent.value)
               case Success(None) =>
                 // No remote found, return local, async update both
                 reporter.onCacheMissButFoundExpiredLocal(key, elapsedTime(startTime))
                 tryGenerateAndSet(key, genValue, startTime)
-                Future.successful(expiredLocalValue.value.get)
+                Future.fromTry(expiredLocalValue.value)
               case Failure(e) =>
                 reporter.onRemoteError(key, e, elapsedTime(startTime))
                 logger.warn(s"apply, key: $key expired local value and failed to get remote", e)
                 tryGenerateAndSet(key, genValue, startTime)
-                Future.successful(expiredLocalValue.value.get)
+                Future.fromTry(expiredLocalValue.value)
             }
           case Success(expiredLocalValue) if remoteRW.isEmpty =>
             // There is no remote cache configured, we'are on our own
             // Return expired value and try to generate a new one for the future
             reporter.onCacheMissButFoundExpiredLocal(key, elapsedTime(startTime))
             tryGenerateAndSet(key, genValue, startTime)
-            Future.successful(expiredLocalValue.value.get)
+            Future.fromTry(expiredLocalValue.value)
           case Failure(e) =>
             // This is almost impossible to happen because it's local and we don't save failed values
+            // Failed values are stored into property "value", not as the value itself
             reporter.onLocalError(key, e, elapsedTime(startTime))
             logger.warn(s"apply, key: $key got a failed future from cache!? This is almost impossible!", e)
-            tryGenerateAndSet(key, genValue, startTime).map(_.value.get)
+            for {
+              tsv <- tryGenerateAndSet(key, genValue, startTime)
+              value <- Future.fromTry(tsv.value)
+            } yield value
         }
       case None if remoteRW.nonEmpty =>
         // No local, let's try remote
@@ -203,26 +207,35 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
             // Remote is good, set locally and return it
             reporter.onRemoteCacheHit(key, elapsedTime(startTime))
             localCache.foreach(_.set(key, remoteValue))
-            Future.successful(remoteValue.value.get)
+            Future.fromTry(remoteValue.value)
           case Success(Some(expiredRemote)) =>
             // Expired remote, return the it, async update
             reporter.onCacheMissButFoundExpiredRemote(key, elapsedTime(startTime))
-            tryGenerateAndSet(key, genValue, startTime).map(_.value)
-            Future.successful(expiredRemote.value.get)
+            tryGenerateAndSet(key, genValue, startTime)
+            Future.fromTry(expiredRemote.value)
           case Success(None) =>
             // No good remote, sync generate
             reporter.onCacheMissNothingFound(key, elapsedTime(startTime))
-            tryGenerateAndSet(key, genValue, startTime).map(_.value.get)
+            for {
+              tsv <- tryGenerateAndSet(key, genValue, startTime)
+              value <- Future.fromTry(tsv.value)
+            } yield value
           case Failure(e) =>
             reporter.onRemoteError(key, e, elapsedTime(startTime))
             logger.warn(s"apply, key: $key expired local value and remote error", e)
-            tryGenerateAndSet(key, genValue, startTime).map(_.value.get)
+            for {
+              tsv <- tryGenerateAndSet(key, genValue, startTime)
+              value <- Future.fromTry(tsv.value)
+            } yield value
         }
       case None if remoteRW.isEmpty =>
         // No local and no remote to look, just generate it
         // The caller will need to wait for the value generation
         reporter.onCacheMissNothingFound(key, elapsedTime(startTime))
-        tryGenerateAndSet(key, genValue, startTime).map(_.value.get)
+        for {
+          tsv <- tryGenerateAndSet(key, genValue, startTime)
+          value <- Future.fromTry(tsv.value)
+        } yield value
     }
     result.onComplete {
       case Success(_) =>
@@ -262,7 +275,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
     remote.get(key).asTry().flatMap {
       case Success(Some(remoteValue)) if remoteValue == localValue =>
         // Remote is the same as local, return any of them
-        Future.successful(remoteValue.value.get)
+        Future.fromTry(remoteValue.value)
       case Success(Some(remoteValue)) =>
         // Something is different, try to figure it out
         val valuesResult = if (remoteValue.value == localValue.value) "same-value" else "different-values"
@@ -282,18 +295,22 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
         logger.warn(s"sanityLocalValueCheck, key $key: got different results for local $localValue and remote $remoteValue ($finalResult)")
         reporter.onSanityLocalValueCheckFailedResult(key, finalResult, elapsedTime(startTime))
         // return remote to keep everyone consistent
-        Future.successful(remoteValue.value.get)
+        Future.fromTry(remoteValue.value)
       case Success(None) =>
         val localExpired = localValue.hasExpired(ttl, now, ttlCachedErrors)
         val finalResult = s"missing-remote-local-expired-${localExpired}"
         logger.warn(s"sanityLocalValueCheck, key $key: got local $localValue but no remote ($finalResult)")
         reporter.onSanityLocalValueCheckFailedResult(key, finalResult, elapsedTime(startTime))
         // Try generate it to keep a behaviour equivalent to remote only
-        tryGenerateAndSet(key, genValue, startTime).map(_.value.get)
+        for {
+          tsv <- tryGenerateAndSet(key, genValue, startTime)
+          value <- Future.fromTry(tsv.value)
+        } yield value
+
       case Failure(e) =>
         reporter.onRemoteError(key, e, elapsedTime(startTime))
         logger.warn(s"sanityLocalValueCheck, key: $key  failed to get remote", e)
-        Future.successful(localValue.value.get)
+        Future.fromTry(localValue.value)
     }
   }
 
