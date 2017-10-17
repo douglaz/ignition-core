@@ -1,6 +1,7 @@
 package ignition.core.cache
 
 import java.io.FileNotFoundException
+import java.util.concurrent.atomic.AtomicInteger
 
 import akka.actor.ActorSystem
 import ignition.core.cache.ExpiringMultiLevelCache.TimestampedValue
@@ -35,27 +36,41 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
   }
 
   it should "calculate a value on cache miss after ttl" in {
-    var myRequestCount: Int = 0
+    val myRequestCount = new AtomicInteger()
 
     def myRequest(): Future[Data] = {
-      myRequestCount = myRequestCount + 1
+      myRequestCount.incrementAndGet()
       Future.successful(Data("success"))
     }
 
     val local = new ExpiringLruLocalCache[TimestampedValue[Data]](100)
     val cache = ExpiringMultiLevelCache[Data](ttl = 9.seconds, localCache = Option(local))
 
-    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
-    myRequestCount shouldBe 1
-    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
-    myRequestCount shouldBe 1
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
+    myRequestCount.get() shouldBe 1
+
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
+    myRequestCount.get() shouldBe 1
 
     Thread.sleep(10000)
 
-    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
-    myRequestCount shouldBe 2
-    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
-    myRequestCount shouldBe 2
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
+    myRequestCount.get() shouldBe 2
+
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
+    myRequestCount.get() shouldBe 2
   }
 
   it should "calculate a value on cache miss just once, the second call should be from cache hit" in {
