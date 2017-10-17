@@ -70,6 +70,34 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
       result shouldBe Data("success")
     }
 
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
+    whenReady(cache("key", myRequest), timeout(1.minute)) { result =>
+      result shouldBe Data("success")
+    }
+
     myRequestCount.get() shouldBe 2
   }
 
