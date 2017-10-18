@@ -1,6 +1,7 @@
 package ignition.core.cache
 
 import java.io.FileNotFoundException
+import java.util.concurrent.atomic.AtomicInteger
 
 import akka.actor.ActorSystem
 import ignition.core.cache.ExpiringMultiLevelCache.TimestampedValue
@@ -35,27 +36,42 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
   }
 
   it should "calculate a value on cache miss after ttl" in {
-    var myRequestCount: Int = 0
+    val cacheTtl = 3.seconds
+    val myRequestCount = new AtomicInteger()
 
     def myRequest(): Future[Data] = {
-      myRequestCount = myRequestCount + 1
+      myRequestCount.incrementAndGet()
       Future.successful(Data("success"))
     }
 
     val local = new ExpiringLruLocalCache[TimestampedValue[Data]](100)
-    val cache = ExpiringMultiLevelCache[Data](ttl = 9.seconds, localCache = Option(local))
+    val cache = ExpiringMultiLevelCache[Data](ttl = cacheTtl, localCache = Option(local))
 
-    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
-    myRequestCount shouldBe 1
-    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
-    myRequestCount shouldBe 1
+    whenReady(cache("key", myRequest)) { result =>
+      result shouldBe Data("success")
+    }
 
-    Thread.sleep(10000)
+    myRequestCount.get() shouldBe 1
 
-    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
-    myRequestCount shouldBe 2
-    Await.result(cache("key", myRequest), 1.minute) shouldBe Data("success")
-    myRequestCount shouldBe 2
+    whenReady(cache("key", myRequest)) { result =>
+      result shouldBe Data("success")
+    }
+
+    myRequestCount.get() shouldBe 1
+
+    Thread.sleep(cacheTtl.toMillis + 10)
+
+    whenReady(cache("key", myRequest)) { result =>
+      result shouldBe Data("success")
+    }
+
+    myRequestCount.get() shouldBe 2
+
+    whenReady(cache("key", myRequest)) { result =>
+      result shouldBe Data("success")
+    }
+
+    myRequestCount.get() shouldBe 2
   }
 
   it should "calculate a value on cache miss just once, the second call should be from cache hit" in {
@@ -156,7 +172,7 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
     }
 
     val local = new ExpiringLruLocalCache[TimestampedValue[Data]](100)
-    val cache = ExpiringMultiLevelCache[Data](ttl = 1.minute, localCache = Option(local), cacheErrors = true, ttlCachedErrors = 9.seconds)
+    val cache = ExpiringMultiLevelCache[Data](ttl = 1.minute, localCache = Option(local), cacheErrors = true, ttlCachedErrors = 4.seconds)
 
     val eventualCache = cache("key", myFailedRequest)
     whenReady(eventualCache.failed) { failure =>
@@ -170,7 +186,7 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
       myFailedRequestCount shouldBe 1
     }
 
-    Thread.sleep(10000)
+    Thread.sleep(5000)
 
     val eventualCache3 = cache("key", myFailedRequest)
     whenReady(eventualCache3.failed) { failure =>
@@ -184,7 +200,7 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
       myFailedRequestCount shouldBe 2
     }
 
-    Thread.sleep(1000)
+    Thread.sleep(500)
 
     val eventualCache5 = cache("key", myFailedRequest)
     whenReady(eventualCache5.failed) { failure =>
