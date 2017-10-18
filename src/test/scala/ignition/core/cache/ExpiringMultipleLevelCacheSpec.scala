@@ -59,23 +59,19 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers with ScalaFu
 
     myRequestCount.get() shouldBe 1
 
-    val f = Future {
-      Thread.sleep(cacheTtl.toMillis + 10)
+    Thread.sleep(cacheTtl.toMillis + 10)
+
+    whenReady(cache("key", myRequest)) { result =>
+      result shouldBe Data("success")
     }
 
-    whenReady(f, timeout(cacheTtl + 20.milli)) { _ =>
-      whenReady(cache("key", myRequest)) { result =>
-        result shouldBe Data("success")
-      }
+    myRequestCount.get() shouldBe 2
 
-      myRequestCount.get() shouldBe 2
-
-      whenReady(cache("key", myRequest)) { result =>
-        result shouldBe Data("success")
-      }
-
-      myRequestCount.get() shouldBe 2
+    whenReady(cache("key", myRequest)) { result =>
+      result shouldBe Data("success")
     }
+
+    myRequestCount.get() shouldBe 2
   }
 
   it should "calculate a value on cache miss just once, the second call should be from cache hit" in {
