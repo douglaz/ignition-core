@@ -11,7 +11,7 @@ class FutureUtilsSpec extends FlatSpec with Matchers with ScalaFutures {
   "FutureUtils" should "provide toLazyIterable" in {
     val timesCalled = collection.mutable.Map.empty[Int, Int].withDefaultValue(0)
 
-    val generators = (0 until 20).map { i => () => Future { timesCalled(i) += 1 ; i } }
+    val generators = (0 until 20).map { i => () => Future { synchronized { timesCalled(i) += 1 } ; i } }
     val iterable = generators.toLazyIterable()
     val iterator = iterable.toIterator
     timesCalled.forall { case (_, count) => count == 0 } shouldBe true
