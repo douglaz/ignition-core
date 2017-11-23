@@ -37,6 +37,18 @@ object SparkContextUtils {
     override def getPartition(key: Any): Int = index(key)
   }
 
+  case class SizeBasedFileHandling(averageEstimatedCompressionRatio: Int = 8, compressedExtensions: Set[String] = Set(".gz")) {
+
+    def isBig(f: HadoopFile, uncompressedBigSize: Long): Boolean = estimatedSize(f) >= uncompressedBigSize
+
+    def estimatedSize(f: HadoopFile): Long = if (isCompressed(f))
+      f.size * averageEstimatedCompressionRatio
+    else
+      f.size
+
+    def isCompressed(f: HadoopFile): Boolean = compressedExtensions.exists(f.path.endsWith)
+  }
+
   private lazy val amazonS3ClientFromEnvironmentVariables = new AmazonS3Client(new EnvironmentVariableCredentialsProvider())
 
   private def close(inputStream: InputStream, path: String): Unit = {
@@ -248,20 +260,6 @@ object SparkContextUtils {
       else
         objectHadoopFile(paths, minimumPaths)
     }
-
-    case class SizeBasedFileHandling(averageEstimatedCompressionRatio: Int = 8,
-                                     compressedExtensions: Set[String] = Set(".gz")) {
-
-      def isBig(f: HadoopFile, uncompressedBigSize: Long): Boolean = estimatedSize(f) >= uncompressedBigSize
-
-      def estimatedSize(f: HadoopFile) = if (isCompressed(f))
-        f.size * averageEstimatedCompressionRatio
-      else
-        f.size
-
-      def isCompressed(f: HadoopFile): Boolean = compressedExtensions.exists(f.path.endsWith)
-    }
-
 
     private def readSmallFiles(smallFiles: List[HadoopFile],
                                maxBytesPerPartition: Long,
