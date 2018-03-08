@@ -352,7 +352,7 @@ def get_master(cluster_name, region=default_region):
     masters = get_masters(cluster_name, region=region)
     if not masters:
         raise CommandError("No master on {}".format(cluster_name))
-    return masters[0].public_dns_name
+    return masters[0].private_dns_name
 
 
 def ssh_master(cluster_name, key_file=default_key_file, user=default_remote_user, region=default_region, *args):
