@@ -337,7 +337,7 @@ def destroy(cluster_name, delete_groups=False, region=default_region, wait_termi
     if all_instances:
         log.info('The following instances will be terminated:')
         for i in all_instances:
-            log.info('-> %s' % i.public_dns_name)
+            log.info('-> %s' % (i.public_dns_name or i.private_dns_name))
 
         log.info('Terminating master...')
         for i in masters:
@@ -364,7 +364,7 @@ def get_master(cluster_name, region=default_region):
     masters = get_masters(cluster_name, region=region)
     if not masters:
         raise CommandError("No master on {}".format(cluster_name))
-    return masters[0].public_dns_name
+    return masters[0].public_dns_name or masters[0].private_dns_name
 
 
 def ssh_master(cluster_name, key_file=default_key_file, user=default_remote_user, region=default_region, *args):
