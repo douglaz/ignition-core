@@ -92,8 +92,8 @@ object CoreJobRunner {
 
       // Also try to propagate logging context to workers
       // TODO: find a more efficient and bullet-proof way
-      val configBroadCast = sc.broadcast(config)
-      sc.parallelize(Range(1, 2000), numSlices = 2000).foreachPartition(_ => setLoggingContextValues(configBroadCast.value))
+//      val configBroadCast = sc.broadcast(config)
+//      sc.parallelize(Range(1, 2000), numSlices = 2000).foreachPartition(_ => setLoggingContextValues(configBroadCast.value))
 
       val context = RunnerContext(sc, config)
 
