@@ -689,7 +689,7 @@ object SparkContextUtils {
 
       if (forceSynch || foundLocalPaths.isEmpty) {
         delete(new Path(syncPath(s"$synchLocally/")))
-        val data = parallelReadTextFiles(hadoopFiles, maxBytesPerPartition, minPartitions, synchLocally = None)
+        val data = parallelReadTextFiles(hadoopFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling = sizeBasedFileHandling,  synchLocally = None)
         data.saveAsTextFile(cacheKey)
       }
 
