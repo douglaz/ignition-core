@@ -9,13 +9,13 @@ scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-Xfatal-warning
 // Because we can't run two spark contexts on same VM
 parallelExecution in Test := false
 
-libraryDependencies += ("org.apache.spark" %% "spark-core" % "2.3.0" % "provided")
+libraryDependencies += ("org.apache.spark" %% "spark-core" % "2.3.1" % "provided")
   .exclude("org.apache.hadoop", "hadoop-client")
   .exclude("org.slf4j", "slf4j-log4j12")
 
-libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "2.7.6" % "provided")
+libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "2.8.4" % "provided")
 
-libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.7.6")
+libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.8.4")
   .exclude("org.apache.htrace", "htrace-core")
   .exclude("commons-beanutils", "commons-beanutils")
   .exclude("org.slf4j", "slf4j-log4j12")
