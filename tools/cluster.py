@@ -510,6 +510,73 @@ def job_run(cluster_name, job_name, job_mem,
     return (job_name, job_tag)
 
 
+@arg('job-mem', help='The amount of memory to use for this job (like: 80G)')
+@named('local-yarn-run')
+def job_local_yarn_run(job_name, job_mem, queue,
+            job_user=getpass.getuser(),
+            utc_job_date=None, job_tag=None,
+            disable_assembly_build=False,
+            spark_submit='spark-submit',
+            deploy_mode='cluster',
+            yarn_memory_overhead=0.3,
+            driver_heap_size=default_driver_heap_size):
+
+    def parse_memory(s):
+        import re
+        match = re.match(r'([0-9]+)([a-zA-Z]+)', s)
+        if match is None or len(match.groups()) != 2:
+            raise Exception('Invalid memory size: ' + s)
+        return match.groups()
+
+    def calculate_overhead(s):
+        from math import ceil
+        (n, unit) = parse_memory(s)
+        return str(int(ceil(float(n) * (1 + yarn_memory_overhead)))) + unit
+
+    driver_overhead = calculate_overhead(driver_heap_size)
+    executor_overhead = calculate_overhead(job_mem)
+
+    utc_job_date_example = '2014-05-04T13:13:10Z'
+    if utc_job_date and len(utc_job_date) != len(utc_job_date_example):
+        raise CommandError('UTC Job Date should be given as in the following example: {}'.format(utc_job_date_example))
+    
+    project_path = get_project_path()
+    project_name = os.path.basename(project_path)
+    # Use job user on remote path to avoid too many conflicts for different local users
+    job_date = utc_job_date or datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+    job_tag = job_tag or job_date.replace(':', '_').replace('-', '_').replace('Z', 'UTC')
+    
+    if not disable_assembly_build:
+        build_assembly()
+
+    assembly_path = get_assembly_path()
+    if assembly_path is None:
+        raise Exception('Something is wrong: no assembly found')
+
+    
+    log.info('Will run job using local installation of yarn')
+
+    check_call([
+        spark_submit,
+        '--class', 'ignition.jobs.Runner',
+        '--master', 'yarn',
+        '--deploy-mode', deploy_mode,
+        '--queue', queue,
+        '--driver-memory', driver_heap_size,
+        '--conf', 'spark.yarn.am.memory', driver_heap_size,
+        '--executor-memory', job_mem,
+        '--conf', 'spark.yarn.am.memoryOverhead', driver_overhead,
+        '--conf', 'spark.driver.memoryOverhead', driver_overhead,
+        '--conf', 'spark.executor.memoryOverhead', executor_overhead,
+        assembly_path,
+        job_name,
+        '--runner-master', 'yarn',
+        '--runner-executor-memory', job_mem
+        # add job tag, date, etc
+
+    ])
+    
+
 @named('attach')
 def job_attach(cluster_name, key_file=default_key_file, job_name=None, job_tag=None,
                master=None, remote_user=default_remote_user, region=default_region):
@@ -750,7 +817,7 @@ sudo pip3 install -r requirements/user.pip
 
 parser = ArghParser()
 parser.add_commands([launch, destroy, get_master, ssh_master, tag_cluster_instances, health_check])
-parser.add_commands([job_run, job_attach, wait_for_job,
+parser.add_commands([job_run, job_local_yarn_run, job_attach, wait_for_job,
                      kill_job, killall_jobs, collect_job_results], namespace="jobs")
 
 if __name__ == '__main__':
