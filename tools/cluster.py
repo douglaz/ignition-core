@@ -518,8 +518,9 @@ def job_local_yarn_run(job_name, job_mem, queue,
             disable_assembly_build=False,
             spark_submit='spark-submit',
             deploy_mode='cluster',
-            yarn_memory_overhead=0.3,
-            driver_heap_size=default_driver_heap_size):
+            yarn_memory_overhead=0.2,
+            driver_heap_size=default_driver_heap_size,
+            driver_java_options='-verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps'):
 
     def parse_memory(s):
         import re
@@ -540,9 +541,6 @@ def job_local_yarn_run(job_name, job_mem, queue,
     if utc_job_date and len(utc_job_date) != len(utc_job_date_example):
         raise CommandError('UTC Job Date should be given as in the following example: {}'.format(utc_job_date_example))
     
-    project_path = get_project_path()
-    project_name = os.path.basename(project_path)
-    # Use job user on remote path to avoid too many conflicts for different local users
     job_date = utc_job_date or datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
     job_tag = job_tag or job_date.replace(':', '_').replace('-', '_').replace('Z', 'UTC')
     
@@ -555,25 +553,26 @@ def job_local_yarn_run(job_name, job_mem, queue,
 
     
     log.info('Will run job using local installation of yarn')
-
     check_call([
         spark_submit,
         '--class', 'ignition.jobs.Runner',
         '--master', 'yarn',
+        '--driver-java-options', driver_java_options,
         '--deploy-mode', deploy_mode,
         '--queue', queue,
         '--driver-memory', driver_heap_size,
-        '--conf', 'spark.yarn.am.memory', driver_heap_size,
+        '--conf', 'spark.yarn.am.memory=' + driver_heap_size,
         '--executor-memory', job_mem,
-        '--conf', 'spark.yarn.am.memoryOverhead', driver_overhead,
-        '--conf', 'spark.driver.memoryOverhead', driver_overhead,
-        '--conf', 'spark.executor.memoryOverhead', executor_overhead,
+        '--conf', 'spark.yarn.am.memoryOverhead=' + driver_overhead,
+        '--conf', 'spark.driver.memoryOverhead=' + driver_overhead,
+        '--conf', 'spark.executor.memoryOverhead=' + executor_overhead,
         assembly_path,
         job_name,
         '--runner-master', 'yarn',
-        '--runner-executor-memory', job_mem
-        # add job tag, date, etc
-
+        '--runner-executor-memory', job_mem,
+        '--runner-user', job_user,
+        '--runner-tag', job_tag,
+        '--runner-date', job_date
     ])
     
 
