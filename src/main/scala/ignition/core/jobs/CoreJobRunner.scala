@@ -105,7 +105,7 @@ object CoreJobRunner {
           t.printStackTrace()
           System.exit(1) // force exit of all threads
       }
-      Try { sc.stop() }
+
       import scala.concurrent.ExecutionContext.Implicits.global
       Future {
         // If everything is fine, the system will shut down without the help of this thread and YARN will report success
