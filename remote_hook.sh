@@ -66,7 +66,7 @@ install_and_run_zeppelin() {
     if [[ -f "zeppelin/bin/zeppelin.sh" ]]; then
         export MASTER="${JOB_MASTER}"
         export ZEPPELIN_PORT="8081"
-        export SPARK_HOME="/root/spark"
+        export SPARK_HOME=$(get_first_present /root/spark /opt/spark ~/spark*/)
         export SPARK_SUBMIT_OPTIONS="--jars ${JAR_PATH} --executor-memory ${SPARK_MEM_PARAM}"
         sudo -E zeppelin/bin/zeppelin.sh
     else
@@ -74,6 +74,19 @@ install_and_run_zeppelin() {
     fi
 }
 
+install_and_run_jupyter() {
+    sudo yum -y install python3 python3-pip
+    sudo pip3 install jupyter pandas boto3 matplotlib numpy sklearn scipy
+    export SPARK_HOME=$(get_first_present /root/spark /opt/spark ~/spark*/)
+    export HADOOP_HOME=$(get_first_present /root/hadoop /opt/hadoop ~/hadoop*/)
+    export SPARK_CONF_DIR="${SPARK_HOME}/conf"
+    export HADOOP_CONF_DIR="${HADOOP_HOME}/conf"
+    export JOB_MASTER=${MASTER:-spark://${SPARK_MASTER_HOST}:7077}
+    export PYSPARK_PYTHON=$(which python3)
+    export PYSPARK_DRIVER_PYTHON=$(which jupyter)
+    export PYSPARK_DRIVER_PYTHON_OPTS="notebook --allow-root --ip=${SPARK_MASTER_HOST} --no-browser --port=8888"
+    sudo -E "${SPARK_HOME}/bin/pyspark" --master "${JOB_MASTER}" --executor-memory "${SPARK_MEM_PARAM}" --driver-memory "${DRIVER_HEAP_SIZE}"
+}
 
 trap "on_trap_exit" EXIT
 
@@ -105,6 +118,8 @@ if [[ "${JOB_NAME}" == "shell" ]]; then
     sudo -E ${SPARK_HOME}/bin/spark-shell --master "${JOB_MASTER}" --jars ${JAR_PATH} --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --executor-memory "${SPARK_MEM_PARAM}" || notify_error_and_exit "Execution failed for shell"
 elif [[ "${JOB_NAME}" == "zeppelin" ]]; then
     install_and_run_zeppelin
+elif [[ "${JOB_NAME}" == "jupyter" ]]; then
+    install_and_run_jupyter
 else
     JOB_OUTPUT="${JOB_CONTROL_DIR}/output.log"
     tail -F "${JOB_OUTPUT}" &
