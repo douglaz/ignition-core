@@ -516,6 +516,7 @@ def job_local_yarn_run(job_name, job_mem, queue,
             job_user=getpass.getuser(),
             utc_job_date=None, job_tag=None,
             disable_assembly_build=False,
+            executor_cores=5,
             spark_submit='spark-submit',
             deploy_mode='cluster',
             yarn_memory_overhead=0.2,
@@ -532,7 +533,7 @@ def job_local_yarn_run(job_name, job_mem, queue,
     def calculate_overhead(s):
         from math import ceil
         (n, unit) = parse_memory(s)
-        return str(int(ceil(float(n) * (1 + yarn_memory_overhead)))) + unit
+        return str(int(ceil(float(n) * yarn_memory_overhead))) + unit
 
     driver_overhead = calculate_overhead(driver_heap_size)
     executor_overhead = calculate_overhead(job_mem)
@@ -560,6 +561,7 @@ def job_local_yarn_run(job_name, job_mem, queue,
         '--driver-java-options', driver_java_options,
         '--deploy-mode', deploy_mode,
         '--queue', queue,
+        '--conf', 'spark.executor.cores=' + str(executor_cores),
         '--driver-memory', driver_heap_size,
         '--conf', 'spark.yarn.am.memory=' + driver_heap_size,
         '--executor-memory', job_mem,
