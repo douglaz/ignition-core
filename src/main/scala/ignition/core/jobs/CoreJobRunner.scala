@@ -1,8 +1,9 @@
 package ignition.core.jobs
 
 import org.apache.spark.{SparkConf, SparkContext}
-import org.joda.time.{DateTimeZone, DateTime}
+import org.joda.time.{DateTime, DateTimeZone}
 
+import scala.concurrent.Future
 import scala.util.Try
 
 object CoreJobRunner {
@@ -104,8 +105,14 @@ object CoreJobRunner {
           t.printStackTrace()
           System.exit(1) // force exit of all threads
       }
-      Try { sc.stop() }
-      System.exit(0) // force exit of all threads
+
+      import scala.concurrent.ExecutionContext.Implicits.global
+      Future {
+        // If everything is fine, the system will shut down without the help of this thread and YARN will report success
+        // But sometimes it gets stuck, then it's necessary to use the force, but this may finish the job as failed on YARN
+        Thread.sleep(30 * 1000)
+        System.exit(0) // force exit of all threads
+      }
     }
   }
 }

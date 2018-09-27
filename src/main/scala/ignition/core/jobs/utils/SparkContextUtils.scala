@@ -2,10 +2,12 @@ package ignition.core.jobs.utils
 
 import java.io.InputStream
 
-import com.amazonaws.auth.EnvironmentVariableCredentialsProvider
+import com.amazonaws.auth.DefaultAWSCredentialsProviderChain
 import com.amazonaws.services.s3.AmazonS3Client
 import com.amazonaws.services.s3.model.{ListObjectsRequest, ObjectListing, S3ObjectSummary}
+import ignition.core.utils.CollectionUtils._
 import ignition.core.utils.DateUtils._
+import ignition.core.utils.ExceptionUtils._
 import ignition.core.utils.{AutoCloseableIterator, ByteUtils, HadoopUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -15,17 +17,15 @@ import org.apache.hadoop.mapreduce.lib.input.TextInputFormat
 import org.apache.spark.rdd.{RDD, UnionRDD}
 import org.apache.spark.{Partitioner, SparkContext}
 import org.joda.time.DateTime
+import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.io.{Codec, Source}
 import scala.reflect.ClassTag
-import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
-import ignition.core.utils.ExceptionUtils._
-import ignition.core.utils.CollectionUtils._
-import org.slf4j.LoggerFactory
+import scala.util.{Failure, Success, Try}
 
 
 object SparkContextUtils {
@@ -49,7 +49,7 @@ object SparkContextUtils {
     def isCompressed(f: HadoopFile): Boolean = compressedExtensions.exists(f.path.endsWith)
   }
 
-  private lazy val amazonS3ClientFromEnvironmentVariables = new AmazonS3Client(new EnvironmentVariableCredentialsProvider())
+  private lazy val amazonS3ClientFromEnvironmentVariables = new AmazonS3Client(new DefaultAWSCredentialsProviderChain())
 
   private def close(inputStream: InputStream, path: String): Unit = {
     try {
