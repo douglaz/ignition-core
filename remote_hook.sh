@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -x
+
 # We suppose we are in a subdirectory of the root project
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
@@ -84,7 +86,7 @@ MAIN_CLASS="ignition.jobs.Runner"
 
 cd "${DIR}" || notify_error_and_exit "Internal script error for job ${JOB_WITH_TAG}"
 
-JAR_PATH_SRC=$(echo "${DIR}"/*assembly*.jar)
+JAR_PATH_SRC=$(ls "${DIR}"/*assembly*.jar | tail -1)
 JAR_PATH="${JOB_CONTROL_DIR}/Ignition.jar"
 
 cp ${JAR_PATH_SRC} ${JAR_PATH}
