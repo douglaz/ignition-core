@@ -37,7 +37,13 @@ echo "export JAVA_HOME=/usr/lib/jvm/java-1.8.0" >> /etc/environment
 yum install -y snappy
 
 # Install netlib-java native dependencies
-yum install -y  blas atlas lapack
+yum install -y blas atlas lapack
+
+# Install python3 and pip3
+yum install -y python3 python3-pip
+
+# Install python3 and pip3
+yum install -y tmux
 
 # Create /usr/bin/realpath which is used by R to find Java installations
 # NOTE: /usr/bin/realpath is missing in CentOS AMIs. See
