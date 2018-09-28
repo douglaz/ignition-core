@@ -372,6 +372,14 @@ def ssh_master(cluster_name, key_file=default_key_file, user=default_remote_user
     ssh_call(user=user, host=master, key_file=key_file, args=args)
 
 
+def exec_shell(cluster_name, command, key_file=default_key_file, user=default_remote_user, region=default_region):
+    masters, slaves = get_active_nodes(cluster_name, region=region)
+    for node in masters + slaves:
+        host = node.public_dns_name or node.private_dns_name
+        output = ssh_call(user=user, host=host, key_file=key_file, args=[command], allocate_terminal=True, get_output=True)
+        log.info("exec output of host %s:\n%s", host, output)
+
+
 def rsync_call(user, host, key_file, args=[], src_local='', dest_local='', remote_path='', tries=3):
     rsync_args = ['rsync', '--timeout', '60', '-azvP']
     rsync_args += ['-e', 'ssh -i {} -o StrictHostKeyChecking=no'.format(key_file)]
@@ -817,7 +825,7 @@ sudo pip3 install -r requirements/user.pip
 
 
 parser = ArghParser()
-parser.add_commands([launch, destroy, get_master, ssh_master, tag_cluster_instances, health_check])
+parser.add_commands([launch, destroy, get_master, ssh_master, tag_cluster_instances, health_check, exec_shell])
 parser.add_commands([job_run, job_local_yarn_run, job_attach, wait_for_job,
                      kill_job, killall_jobs, collect_job_results], namespace="jobs")
 
