@@ -1,14 +1,19 @@
 package ignition.core.jobs
 
-import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.SparkContext
+import org.apache.spark.sql.SparkSession
 import org.joda.time.{DateTime, DateTimeZone}
+import org.slf4j.{Logger, LoggerFactory}
 
 import scala.concurrent.Future
 import scala.util.Try
 
 object CoreJobRunner {
 
+  val logger: Logger = LoggerFactory.getLogger(getClass)
+
   case class RunnerContext(sparkContext: SparkContext,
+                           sparkSession: SparkSession,
                            config: RunnerConfig)
 
 
@@ -71,32 +76,39 @@ object CoreJobRunner {
       val appName = s"${config.setupName}.${config.tag}"
 
 
-      val sparkConf = new SparkConf()
-      sparkConf.set("spark.executor.memory", config.executorMemory)
+      val builder = SparkSession.builder
+      builder.config("spark.executor.memory", config.executorMemory)
 
-      sparkConf.set("spark.eventLog.dir", "file:///media/tmp/spark-events")
+      builder.config("spark.eventLog.dir", "file:///media/tmp/spark-events")
 
-      sparkConf.setMaster(config.master)
-      sparkConf.setAppName(appName)
+      builder.master(config.master)
+      builder.appName(appName)
 
-      sparkConf.set("spark.hadoop.mapred.output.committer.class", classOf[DirectOutputCommitter].getName())
+      builder.config("spark.hadoop.mapred.output.committer.class", classOf[DirectOutputCommitter].getName())
 
-      defaultSparkConfMap.foreach { case (k, v) => sparkConf.set(k, v) }
+      defaultSparkConfMap.foreach { case (k, v) => builder.config(k, v) }
 
-      jobConf.foreach { case (k, v) => sparkConf.set(k, v) }
-
+      jobConf.foreach { case (k, v) => builder.config(k, v) }
 
       // Add logging context to driver
       setLoggingContextValues(config)
-      
-      val sc = new SparkContext(sparkConf)
 
+      try {
+        builder.enableHiveSupport()
+      } catch {
+        case t: Throwable => logger.warn("Failed to enable HIVE support", t)
+      }
+
+      val session = builder.getOrCreate()
+
+      val sc = session.sparkContext
       // Also try to propagate logging context to workers
       // TODO: find a more efficient and bullet-proof way
       val configBroadCast = sc.broadcast(config)
+
       sc.parallelize(Range(1, 2000), numSlices = 2000).foreachPartition(_ => setLoggingContextValues(configBroadCast.value))
 
-      val context = RunnerContext(sc, config)
+      val context = RunnerContext(sc, session, config)
 
       try {
         jobSetup.apply(context)

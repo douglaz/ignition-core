@@ -13,6 +13,8 @@ libraryDependencies += ("org.apache.spark" %% "spark-core" % "2.3.1" % "provided
   .exclude("org.apache.hadoop", "hadoop-client")
   .exclude("org.slf4j", "slf4j-log4j12")
 
+libraryDependencies += ("org.apache.spark" %% "spark-sql" % "2.3.1" % "provided")
+
 libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "2.7.6" % "provided")
 
 libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.7.6")
