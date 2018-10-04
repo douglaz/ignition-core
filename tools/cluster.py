@@ -387,6 +387,7 @@ def build_assembly():
 def get_assembly_path():
     paths = glob.glob(get_project_path() + '/target/scala-*/*assembly*.jar')
     if paths:
+        paths.sort(key=os.path.getmtime)
         return paths[-1]
     else:
         return None
