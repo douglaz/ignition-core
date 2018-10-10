@@ -510,7 +510,7 @@ def job_run(cluster_name, job_name, job_mem,
             raise failed_exception or Exception('Failed!?')
     return (job_name, job_tag)
 
-
+@argh.arg('-c', '--conf', action='append', type=str)
 @arg('job-mem', help='The amount of memory to use for this job (like: 80G)')
 @named('local-yarn-run')
 def job_local_yarn_run(job_name, job_mem, queue,
@@ -522,7 +522,8 @@ def job_local_yarn_run(job_name, job_mem, queue,
             deploy_mode='cluster',
             yarn_memory_overhead=0.2,
             driver_heap_size=default_driver_heap_size,
-            driver_java_options='-verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps'):
+            driver_java_options='-verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps',
+            conf=[]):
 
     def parse_memory(s):
         import re
@@ -555,20 +556,27 @@ def job_local_yarn_run(job_name, job_mem, queue,
 
     
     log.info('Will run job using local installation of yarn')
-    check_call([
-        spark_submit,
-        '--class', 'ignition.jobs.Runner',
-        '--master', 'yarn',
-        '--driver-java-options', driver_java_options,
-        '--deploy-mode', deploy_mode,
-        '--queue', queue,
-        '--conf', 'spark.executor.cores=' + str(executor_cores),
-        '--driver-memory', driver_heap_size,
-        '--conf', 'spark.yarn.am.memory=' + driver_heap_size,
-        '--executor-memory', job_mem,
-        '--conf', 'spark.yarn.am.memoryOverhead=' + driver_overhead,
-        '--conf', 'spark.driver.memoryOverhead=' + driver_overhead,
-        '--conf', 'spark.executor.memoryOverhead=' + executor_overhead,
+    confs = [
+      spark_submit,
+      '--class', 'ignition.jobs.Runner',
+      '--master', 'yarn',
+      '--driver-java-options', driver_java_options,
+      '--deploy-mode', deploy_mode,
+      '--queue', queue,
+      '--conf', 'spark.executor.cores=' + str(executor_cores),
+      '--driver-memory', driver_heap_size,
+      '--conf', 'spark.yarn.am.memory=' + driver_heap_size,
+      '--executor-memory', job_mem,
+      '--conf', 'spark.yarn.am.memoryOverhead=' + driver_overhead,
+      '--conf', 'spark.driver.memoryOverhead=' + driver_overhead,
+      '--conf', 'spark.executor.memoryOverhead=' + executor_overhead
+    ]
+
+    for c in conf:
+        confs.extend(['--conf', c])
+
+    check_call(
+      confs + [
         assembly_path,
         job_name,
         '--runner-master', 'yarn',
