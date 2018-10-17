@@ -114,8 +114,10 @@ def logged_call(args, tries=1):
     return logged_call_base(check_call, args, tries)
 
 
-def ssh_call(user, host, key_file, args=(), allocate_terminal=True, get_output=False):
-    base = ['ssh', '-q']
+def ssh_call(user, host, key_file, args=(), allocate_terminal=True, get_output=False, quiet=True):
+    base = ['ssh']
+    if quiet:
+        base += ['-q']
     if allocate_terminal:
         base += ['-tt']
     base += ['-i', key_file,
@@ -372,12 +374,22 @@ def ssh_master(cluster_name, key_file=default_key_file, user=default_remote_user
     ssh_call(user=user, host=master, key_file=key_file, args=args)
 
 
-def exec_shell(cluster_name, command, key_file=default_key_file, user=default_remote_user, region=default_region):
+def exec_shell(cluster_name, command, key_file=default_key_file, user=default_remote_user, region=default_region, sudo=False):
+    import subprocess
     masters, slaves = get_active_nodes(cluster_name, region=region)
+    if not masters:
+         log.warn('No master found')
     for node in masters + slaves:
         host = node.public_dns_name or node.private_dns_name
-        output = ssh_call(user=user, host=host, key_file=key_file, args=[command], allocate_terminal=True, get_output=True)
-        log.info("exec output of host %s:\n%s", host, output)
+        log.info("exec output of host %s\n", host)
+        cmd = ['ssh', '-t', '-o', 'StrictHostKeyChecking=no', user + '@' + host  ,'-i', key_file]
+        if sudo:
+            cmd += ['sudo']
+        cmd += ['bash']
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        p.communicate(command)
+        if p.wait() != 0:
+            log.warn('\nError executing command on host: %s', host)
 
 
 def rsync_call(user, host, key_file, args=[], src_local='', dest_local='', remote_path='', tries=3):
