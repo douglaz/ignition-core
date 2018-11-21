@@ -614,9 +614,9 @@ def health_check(cluster_name, key_file=default_key_file, master=None, remote_us
                 raise NotHealthyCluster('Not enough healthy slaves: {0}/{1}'.format(len(slaves), nslaves))
             if not masters:
                 raise NotHealthyCluster('No master found')
-        except NotHealthyCluster, e:
+        except NotHealthyCluster as e:
             raise e
-        except Exception, e:
+        except Exception as e:
             log.warning("Failed to check cluster health, cluster: %s, retries %s" % (cluster_name, i), exc_info=True)
             if i >= retries - 1:
                 log.critical("Failed to check cluster health, cluster: %s, giveup!" % (cluster_name))
