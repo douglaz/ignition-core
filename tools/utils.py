@@ -79,7 +79,7 @@ def read_non_blocking(f):
     while select.select([f], [], [], 0)[0]:
         c = f.read(1)
         if c:
-            result.append(c)
+            result.append(c.decode('utf-8'))
         else:
             break
     return ''.join(result) if result else None

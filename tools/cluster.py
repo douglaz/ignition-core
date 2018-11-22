@@ -123,7 +123,7 @@ def ssh_call(user, host, key_file, args=(), allocate_terminal=True, get_output=F
              '{0}@{1}'.format(user, host)]
     base += args
     if get_output:
-        return logged_call_output(base)
+        return logged_call_output(base).decode("utf-8")
     else:
         return logged_call(base)
 
