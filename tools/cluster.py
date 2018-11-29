@@ -802,7 +802,7 @@ def killall_jobs(cluster_name, key_file=default_key_file,
 
 def check_flintrock_installation():
     try:
-        with file('/dev/null', 'w') as devnull:
+        with open('/dev/null', 'w') as devnull:
             call_ec2_script(['--help'], 1 , 1, stdout=devnull)
     except:
         setup = os.path.join(ec2_script_base_path(), 'setup.py')
