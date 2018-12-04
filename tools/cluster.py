@@ -115,7 +115,7 @@ def logged_call(args, tries=1):
 
 
 def ssh_call(user, host, key_file, args=(), allocate_terminal=True, get_output=False):
-    base = ['ssh', '-q']
+    base = ['ssh']
     if allocate_terminal:
         base += ['-tt']
     base += ['-i', key_file,
