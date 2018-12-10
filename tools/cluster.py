@@ -114,8 +114,10 @@ def logged_call(args, tries=1):
     return logged_call_base(check_call, args, tries)
 
 
-def ssh_call(user, host, key_file, args=(), allocate_terminal=True, get_output=False):
+def ssh_call(user, host, key_file, args=(), allocate_terminal=True, get_output=False, quiet=False):
     base = ['ssh']
+    if quiet:
+        base += ['-q']
     if allocate_terminal:
         base += ['-tt']
     base += ['-i', key_file,
@@ -370,6 +372,24 @@ def get_master(cluster_name, region=default_region):
 def ssh_master(cluster_name, key_file=default_key_file, user=default_remote_user, region=default_region, *args):
     master = get_master(cluster_name, region=region)
     ssh_call(user=user, host=master, key_file=key_file, args=args)
+
+
+def exec_shell(cluster_name, command, key_file=default_key_file, user=default_remote_user, region=default_region, sudo=False):
+    import subprocess
+    masters, slaves = get_active_nodes(cluster_name, region=region)
+    if not masters:
+         log.warn('No master found')
+    for node in masters + slaves:
+        host = node.public_dns_name or node.private_dns_name
+        log.info("exec output of host %s\n", host)
+        cmd = ['ssh', '-t', '-o', 'StrictHostKeyChecking=no', user + '@' + host  ,'-i', key_file]
+        if sudo:
+            cmd += ['sudo']
+        cmd += ['bash']
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        p.communicate(command.encode('utf-8'))
+        if p.wait() != 0:
+            log.warn('\nError executing command on host: %s', host)
 
 
 def rsync_call(user, host, key_file, args=[], src_local='', dest_local='', remote_path='', tries=3):
@@ -826,7 +846,7 @@ sudo pip3 install -r requirements/user.pip
 
 
 parser = ArghParser()
-parser.add_commands([launch, destroy, get_master, ssh_master, tag_cluster_instances, health_check])
+parser.add_commands([launch, destroy, get_master, ssh_master, tag_cluster_instances, health_check, exec_shell])
 parser.add_commands([job_run, job_local_yarn_run, job_attach, wait_for_job,
                      kill_job, killall_jobs, collect_job_results], namespace="jobs")
 
