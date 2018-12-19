@@ -139,6 +139,8 @@ object CollectionUtils {
         .mapValues(_.map { case (k, v) => v }.reduce(fn))
         .toList
     }
+    def values: List[V] =
+      iterable.map { case (k, v) => v }.toList
   }
 
 
