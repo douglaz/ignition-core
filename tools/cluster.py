@@ -436,7 +436,8 @@ def job_run(cluster_name, job_name, job_mem,
             kill_on_failure=False,
             destroy_cluster=False,
             region=default_region,
-            driver_heap_size=default_driver_heap_size):
+            driver_heap_size=default_driver_heap_size,
+            remove_files=True):
 
     utc_job_date_example = '2014-05-04T13:13:10Z'
     if utc_job_date and len(utc_job_date) != len(utc_job_date_example):
@@ -503,7 +504,7 @@ def job_run(cluster_name, job_name, job_mem,
                          region=region,
                          job_timeout_minutes=job_timeout_minutes,
                          remote_user=remote_user, remote_control_dir=remote_control_dir,
-                         collect_results_dir=collect_results_dir)
+                         collect_results_dir=collect_results_dir, remove_files=remove_files)
         except JobFailure as e:
             failed = True
             failed_exception = e
@@ -666,21 +667,45 @@ def collect_job_results(cluster_name, job_name, job_tag,
                         region=default_region,
                         master=None, remote_user=default_remote_user,
                         remote_control_dir=default_remote_control_dir,
-                        collect_results_dir=default_collect_results_dir):
+                        collect_results_dir=default_collect_results_dir,
+                        remove_files=False):
     master = master or get_master(cluster_name, region=region)
 
     job_with_tag = get_job_with_tag(job_name, job_tag)
     job_control_dir = get_job_control_dir(remote_control_dir, job_with_tag)
 
+    # Keep the RUNNING file so we can kill the job if needed
+    args = ['--remove-source-files', '--exclude', 'RUNNING'] if remove_files else []
     rsync_call(user=remote_user,
                host=master,
-               # Keep the RUNNING file so we can kill the job if needed
-               args=['--remove-source-files', '--exclude', 'RUNNING'],
+               args=args,
                key_file=key_file,
                dest_local=with_leading_slash(collect_results_dir),
                remote_path=job_control_dir)
 
     return os.path.join(collect_results_dir, os.path.basename(job_control_dir))
+
+
+@named('collect-all-results')
+def collect_all_job_results(cluster_name,
+                            key_file=default_key_file,
+                            region=default_region,
+                            master=None, remote_user=default_remote_user,
+                            remote_control_dir=default_remote_control_dir,
+                            collect_results_dir=default_collect_results_dir,
+                            remove_files=False):
+    master = master or get_master(cluster_name, region=region)
+
+    # Keep the RUNNING file so we can kill the job if needed
+    args = ['--remove-source-files', '--exclude', 'RUNNING'] if remove_files else []
+    rsync_call(user=remote_user,
+               host=master,
+               args=args,
+               key_file=key_file,
+               dest_local=with_leading_slash(collect_results_dir),
+               remote_path=with_leading_slash(remote_control_dir))
+
+    return collect_results_dir
 
 
 @named('wait-for')
@@ -689,7 +714,7 @@ def wait_for_job(cluster_name, job_name, job_tag, key_file=default_key_file,
                  region=default_region,
                  remote_control_dir=default_remote_control_dir,
                  collect_results_dir=default_collect_results_dir,
-                 job_timeout_minutes=0, max_failures=5, seconds_to_sleep=60):
+                 job_timeout_minutes=0, max_failures=5, seconds_to_sleep=60, remove_files=True):
 
     master = master or get_master(cluster_name, region=region)
 
@@ -714,7 +739,7 @@ def wait_for_job(cluster_name, job_name, job_tag, key_file=default_key_file,
                                                key_file=key_file, region=region,
                                                master=master, remote_user=remote_user,
                                                remote_control_dir=remote_control_dir,
-                                               collect_results_dir=collect_results_dir)
+                                               collect_results_dir=collect_results_dir, remove_files=remove_files)
             log.info('Jobs results saved on: {}'.format(dest_log_dir))
             if show_tail:
                 output_log = os.path.join(dest_log_dir, 'output.log')
@@ -852,7 +877,7 @@ sudo pip3 install -r requirements/user.pip
 parser = ArghParser()
 parser.add_commands([launch, destroy, get_master, ssh_master, tag_cluster_instances, health_check, exec_shell])
 parser.add_commands([job_run, job_local_yarn_run, job_attach, wait_for_job,
-                     kill_job, killall_jobs, collect_job_results], namespace="jobs")
+                     kill_job, killall_jobs, collect_job_results, collect_all_job_results], namespace="jobs")
 
 if __name__ == '__main__':
     check_flintrock_installation()
