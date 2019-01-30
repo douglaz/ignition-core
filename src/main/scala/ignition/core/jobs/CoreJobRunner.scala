@@ -35,7 +35,7 @@ object CoreJobRunner {
                           user: String = "nouser",
                           master: String = "local[*]",
                           executorMemory: String = "2G",
-                          additionalArgs: Map[String, String] = Map.empty)
+                          extraArgs: Map[String, String] = Map.empty)
 
   def runJobSetup(args: Array[String], jobsSetups: Map[String, (CoreJobRunner.RunnerContext => Unit, Map[String, String])], defaultSparkConfMap: Map[String, String]) {
     val parser = new scopt.OptionParser[RunnerConfig]("Runner") {
@@ -60,8 +60,8 @@ object CoreJobRunner {
         c.copy(executorMemory = x)
       }
 
-      opt[(String, String)]('w', "runner-with-arg") unbounded() action { (x, c) =>
-        c.copy(additionalArgs = c.additionalArgs ++ Map(x))
+      opt[(String, String)]('w', "runner-extra") unbounded() action { (x, c) =>
+        c.copy(extraArgs = c.extraArgs ++ Map(x))
       }
     }
 

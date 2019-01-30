@@ -13,6 +13,7 @@ SPARK_MEM_PARAM="${6?Please give the Job Memory Size to use}"
 USE_YARN="${7?Please tell if we should use YARN (yes/no)}"
 NOTIFY_ON_ERRORS="${8?Please tell if we will notify on errors (yes/no)}"
 DRIVER_HEAP_SIZE="${9?Please tell driver heap size to use}"
+shift 9
 
 JOB_WITH_TAG=${JOB_NAME}.${JOB_TAG}
 JOB_CONTROL_DIR="${CONTROL_DIR}/${JOB_WITH_TAG}"
@@ -124,7 +125,7 @@ elif [[ "${JOB_NAME}" == "jupyter" ]]; then
 else
     JOB_OUTPUT="${JOB_CONTROL_DIR}/output.log"
     tail -F "${JOB_OUTPUT}" &
-    sudo -E "${SPARK_HOME}/bin/spark-submit" --master "${JOB_MASTER}" --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --class "${MAIN_CLASS}" ${JAR_PATH} "${JOB_NAME}" --runner-date "${JOB_DATE}" --runner-tag "${JOB_TAG}" --runner-user "${JOB_USER}" --runner-master "${JOB_MASTER}" --runner-executor-memory "${SPARK_MEM_PARAM}" >& "${JOB_OUTPUT}" || notify_error_and_exit "Execution failed for job ${JOB_WITH_TAG}"
+    sudo -E "${SPARK_HOME}/bin/spark-submit" --master "${JOB_MASTER}" --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --class "${MAIN_CLASS}" ${JAR_PATH} "${JOB_NAME}" --runner-date "${JOB_DATE}" --runner-tag "${JOB_TAG}" --runner-user "${JOB_USER}" --runner-master "${JOB_MASTER}" --runner-executor-memory "${SPARK_MEM_PARAM}" "$@" >& "${JOB_OUTPUT}" || notify_error_and_exit "Execution failed for job ${JOB_WITH_TAG}"
 fi
 
 touch "${JOB_CONTROL_DIR}/SUCCESS"
