@@ -2,6 +2,8 @@ package ignition.core.jobs
 
 import scala.util.Try
 
+object ExecutionRetry extends ExecutionRetry
+
 trait ExecutionRetry {
 
   def executeRetrying[T](code: => T, maxExecutions: Int = 3): T = {
