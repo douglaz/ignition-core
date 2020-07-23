@@ -16,22 +16,22 @@ def get_active_instances(conn):
     return active
 
 def parse_nodes(active_instances, cluster_name):
-    master_nodes = []
-    slave_nodes = []
+    main_nodes = []
+    subordinate_nodes = []
     for instance in active_instances:
         group_names = [g.name for g in instance.groups]
-        if (cluster_name + "-master") in group_names:
-            master_nodes.append(instance)
-        elif (cluster_name + "-slaves") in group_names:
-            slave_nodes.append(instance)
-    return (master_nodes, slave_nodes)
+        if (cluster_name + "-main") in group_names:
+            main_nodes.append(instance)
+        elif (cluster_name + "-subordinates") in group_names:
+            subordinate_nodes.append(instance)
+    return (main_nodes, subordinate_nodes)
 
-def get_masters(cluster_name, region):
+def get_mains(cluster_name, region):
     conn = boto.ec2.connect_to_region(region)
 
     active = get_active_instances(conn)
-    master_nodes, slave_nodes = parse_nodes(active, cluster_name)
-    return master_nodes
+    main_nodes, subordinate_nodes = parse_nodes(active, cluster_name)
+    return main_nodes
 
 def get_active_nodes(cluster_name, region):
     conn = boto.ec2.connect_to_region(region)
@@ -45,18 +45,18 @@ def tag_instances(cluster_name, tags, region):
     active = get_active_instances(conn)
     logging.info('%d active instances', len(active))
 
-    master_nodes, slave_nodes = parse_nodes(active, cluster_name)
-    logging.info('%d master, %d slave', len(master_nodes), len(slave_nodes))
+    main_nodes, subordinate_nodes = parse_nodes(active, cluster_name)
+    logging.info('%d main, %d subordinate', len(main_nodes), len(subordinate_nodes))
 
-    if master_nodes:
-        conn.create_tags([i.id for i in master_nodes],
-                         {'spark_node_type': 'master'})
-    if slave_nodes:
-        conn.create_tags([i.id for i in slave_nodes],
-                         {'spark_node_type': 'slave'})
+    if main_nodes:
+        conn.create_tags([i.id for i in main_nodes],
+                         {'spark_node_type': 'main'})
+    if subordinate_nodes:
+        conn.create_tags([i.id for i in subordinate_nodes],
+                         {'spark_node_type': 'subordinate'})
 
-    if slave_nodes or master_nodes:
-        ids = [i.id for l in (master_nodes, slave_nodes) for i in l]
+    if subordinate_nodes or main_nodes:
+        ids = [i.id for l in (main_nodes, subordinate_nodes) for i in l]
         conn.create_tags(ids, tags)
 
     logging.info("Tagged nodes.")
