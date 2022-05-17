@@ -331,8 +331,8 @@ def launch(cluster_name, slaves,
         except Exception as e:
             log.exception('Got exception on last steps of cluster configuration')
         log.warn('Destroying unsuccessful cluster')
-        destroy(cluster_name=cluster_name, region=region)
-    raise CommandError('Failed to created cluster {} after failures'.format(cluster_name))
+        destroy(cluster_name=cluster_name, region=region, wait_termination=True)
+    raise CommandError('Failed to created cluster {0} after failures'.format(cluster_name))
 
 
 def destroy(cluster_name, delete_groups=False, region=default_region, wait_termination=False, wait_timeout_minutes=10):
