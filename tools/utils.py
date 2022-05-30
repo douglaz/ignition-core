@@ -12,7 +12,7 @@ def get_active_instances(conn):
     active = [instance for res in conn.get_all_instances()
               for instance in res.instances
               if instance.state in set(['pending', 'running',
-                                        'stopping', 'stopped'])]
+                                        'stopping', 'stopped', 'shutting-down'])]
     return active
 
 def parse_nodes(active_instances, cluster_name):
