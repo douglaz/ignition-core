@@ -59,6 +59,7 @@ default_remote_control_dir = '/tmp/Ignition'
 default_collect_results_dir = '/tmp'
 default_user_data = os.path.join(script_path, 'scripts', 'noop')
 default_defaults_filename = 'cluster_defaults.json'
+default_vpc='vpc-94215df1'
 
 
 master_post_create_commands = [
@@ -335,33 +336,31 @@ def launch(cluster_name, slaves,
     raise CommandError('Failed to created cluster {0} after failures'.format(cluster_name))
 
 
-def destroy(cluster_name, wait_termination=False, wait_timeout_minutes=10, delete_groups=False, region=default_region,script_timeout_total_minutes=55,script_timeout_inactivity_minutes=10):
+def destroy(cluster_name, wait_termination=False, wait_timeout_minutes=10, delete_groups=False, default_vpc, region=default_region,script_timeout_total_minutes=55,script_timeout_inactivity_minutes=10):
     assert not delete_groups, 'Delete groups is deprecated and unsupported'
     masters, slaves = get_active_nodes(cluster_name, region=region)
     
-    try:    # First we test if exist the cluster with the function cluster_exists
-        if cluster_exists(cluster_name,region):
-            # Here we use the script to destroy the cluster using the name of it
-            call_ec2_script(['destroy','--assume-yes', cluster_name,'--ec2-vpc-id','vpc-94215df1'],timeout_total_minutes=script_timeout_total_minutes, timeout_inactivity_minutes=script_timeout_inactivity_minutes)  
-            all_instances = masters + slaves
-            # To better view about what the script is doing i choose to let the same code of the destroy i have updated
-            if all_instances:        
-                log.info('The %s will be terminated:', cluster_name)
+    try:# Here we use the script to destroy the cluster using the name of it
+        call_ec2_script(['destroy','--assume-yes', cluster_name,'--ec2-vpc-id',default_vpc],timeout_total_minutes=script_timeout_total_minutes, timeout_inactivity_minutes=script_timeout_inactivity_minutes)  
+        all_instances = masters + slaves
+        # To better view about what the script is doing i choose to let the same code of the destroy i have updated
+        if all_instances:        
+            log.info('The %s will be terminated:', cluster_name)
+            for i in all_instances:
+                log.info('-> %s' % (i.public_dns_name or i.private_dns_name))        
+
+            if wait_termination:
+                log.info('Waiting for instances termination...')
+            termination_timeout = wait_timeout_minutes*60
+            termination_start = time.time()
+
+            while wait_termination and all_instances and time.time() < termination_start+termination_timeout:
+                all_instances = [i for i in all_instances if i.state != 'terminated']
+                time.sleep(5)
                 for i in all_instances:
-                    log.info('-> %s' % (i.public_dns_name or i.private_dns_name))        
-
-                if wait_termination:
-                    log.info('Waiting for instances termination...')
-                termination_timeout = wait_timeout_minutes*60
-                termination_start = time.time()
-
-                while wait_termination and all_instances and time.time() < termination_start+termination_timeout:
-                    all_instances = [i for i in all_instances if i.state != 'terminated']
-                    time.sleep(5)
-                    for i in all_instances:
-                        i.update()
-                # The log says the destruction is Done but is still running, just chill and enjoy the ride
-                log.info('Done.')
+                    i.update()
+            # The log says the destruction is Done but is still running, just chill and enjoy the ride
+            log.info('Done.')
     # Here is the exception of the try if we don't find the cluster
     except Exception as e:
         print('Does not exist the cluster %s', cluster_name)
