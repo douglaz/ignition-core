@@ -123,3 +123,44 @@ def check_call_with_timeout(args, stdin=None, stdout=None,
         stdall = 'STDOUT:\n{}\nSTDERR:\n{}'.format(stdout, stderr)
         raise subprocess.CalledProcessError(p.returncode, args, output=stdall)
     return p.returncode
+
+def check_call_with_timeout_describe(args, stdin=None, stdout=None,
+                        stderr=None, shell=False,
+                        timeout_total_minutes=0,
+                        timeout_inactivity_minutes=0):
+    stdout = stdout or sys.stdout
+    stderr = stderr or sys.stderr
+    begin_time_total = time.time()
+    begin_time_inactivity = time.time()
+    p = subprocess.Popen(args,
+                         stdin=stdin,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE,
+                         shell=shell,
+                         universal_newlines=False)
+    while True:
+        if read_from_to(p.stdout, stdout):
+            begin_time_inactivity = time.time()
+        if read_from_to(p.stderr, stderr):
+            begin_time_inactivity = time.time()
+        if p.poll() is not None:
+            break
+        terminate_by_total_timeout = timeout_total_minutes > 0 and time.time() - begin_time_total > (timeout_total_minutes * 60)
+        terminate_by_inactivity_timeout = timeout_inactivity_minutes > 0 and time.time() - begin_time_inactivity > (timeout_inactivity_minutes * 60)
+        if terminate_by_inactivity_timeout or terminate_by_total_timeout:
+            p.terminate()
+            for i in range(100):
+                if p.poll is not None:
+                    break
+                time.sleep(0.1)
+            p.kill()
+            message = 'Terminated by inactivity' if terminate_by_inactivity_timeout else 'Terminated by total timeout'
+            raise ProcessTimeoutException(message)
+        time.sleep(0.5)
+    read_from_to(p.stdout, stdout)
+    read_from_to(p.stderr, stderr)
+    if p.returncode != 0:
+        stdall = 'STDOUT:\n{}\nSTDERR:\n{}'.format(stdout, stderr)
+        raise subprocess.CalledProcessError(p.returncode, args, output=stdall)
+    if len(args) > 5:
+        return args[5] 
