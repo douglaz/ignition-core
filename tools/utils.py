@@ -40,6 +40,12 @@ def get_active_nodes(cluster_name, region):
     return parse_nodes(active, cluster_name)
 
 
+def get_active_nodes_by_tag(region, tag_name, tag_value):
+    conn = boto.ec2.connect_to_region(region)
+    filter = {"tag:{0}".format(tag_name):["{0}".format(tag_value)], "instance-state-name":["running"]}
+    return conn.get_only_instances(filters=filter)
+
+
 def tag_instances(cluster_name, tags, region):
     conn = boto.ec2.connect_to_region(region)
 

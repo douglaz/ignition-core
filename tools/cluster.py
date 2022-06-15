@@ -7,12 +7,13 @@ This line is to make pylint happy
 
 """
 
+from cgitb import reset
 import argh
 from argh import ArghParser, CommandError
 from argh.decorators import named, arg
 import subprocess
 from subprocess import check_output, check_call
-from utils import tag_instances, get_masters, get_active_nodes
+from utils import tag_instances, get_masters, get_active_nodes, get_active_nodes_by_tag
 from utils import check_call_with_timeout, check_call_with_timeout_describe
 import os
 import sys
@@ -343,37 +344,73 @@ def launch(cluster_name, slaves,
     raise CommandError('Failed to created cluster {0} after failures'.format(cluster_name))
 
 
+def destroy_by_flyntrock(region, cluster_name, vpc=default_vpc, script_timeout_total_minutes=55, script_timeout_inactivity_minutes=10, wait_termination=False, wait_timeout_minutes=10):
+    # create a variable to store the result
+    result = False
+    
+    try: # create a try catch to manage the possible erros
+        cluster = call_ec2_script_describe(['describe', cluster_name,'--ec2-vpc-id',vpc],timeout_total_minutes=script_timeout_total_minutes, timeout_inactivity_minutes=script_timeout_inactivity_minutes)
+        if cluster == cluster_name:
+            call_ec2_script(['destroy','--assume-yes', cluster_name,'--ec2-vpc-id',vpc],timeout_total_minutes=script_timeout_total_minutes, timeout_inactivity_minutes=script_timeout_inactivity_minutes) 
+            result = True
+    except Exception as e:
+        #log.info('Error to destroy cluster {0} by flintrock'.format(cluster_name))
+        destroy_by_cluster_name_tag(region, 'spark_cluster_name', cluster_name, wait_termination, wait_timeout_minutes)
+        pass
+
+    return result
+
+def destroy_by_cluster_name_tag(region, tag_name, cluster_name, wait_termination, wait_timeout_minutes):
+    instances = get_active_nodes_by_tag(region, tag_name, cluster_name)  
+    
+    if instances:
+        #log.info('Trying to terminate remain instances by id.')
+
+        for instance in instances:
+          #log.info('Terminate instance {0}'.format(instance.id))
+          instance.terminate()
+          log.info('Instance {0} is terminating.'.format(instance.id))
+
+        # call this function to wait instances to terminate
+        wait_for_intances_to_terminate(cluster_name, wait_termination, wait_timeout_minutes, instances)
+    
+    return instances
+
+
 def destroy(cluster_name, wait_termination=False, vpc=default_vpc, wait_timeout_minutes=10, delete_groups=False, region=default_region,script_timeout_total_minutes=55,script_timeout_inactivity_minutes=10):
     assert not delete_groups, 'Delete groups is deprecated and unsupported'
     masters, slaves = get_active_nodes(cluster_name, region=region)
     
     try:    # First we test if exist the cluster with the function cluster_exists        
-        cluster = call_ec2_script_describe(['describe', cluster_name,'--ec2-vpc-id',vpc],timeout_total_minutes=script_timeout_total_minutes, timeout_inactivity_minutes=script_timeout_inactivity_minutes)
-        if cluster == cluster_name:
-            call_ec2_script(['destroy','--assume-yes', cluster_name,'--ec2-vpc-id',vpc],timeout_total_minutes=script_timeout_total_minutes, timeout_inactivity_minutes=script_timeout_inactivity_minutes) 
+        if(destroy_by_flyntrock(region, cluster_name, vpc, script_timeout_total_minutes, script_timeout_inactivity_minutes, wait_termination, wait_timeout_minutes)):
             # Here we use the script to destroy the cluster using the name of it
             all_instances = masters + slaves
             # To better view about what the script is doing i choose to let the same code of the destroy i have updated
-            if all_instances:        
-                log.info('The %s will be terminated:', cluster_name)
-                for i in all_instances:
-                    log.info('-> %s' % (i.public_dns_name or i.private_dns_name))        
-
-                if wait_termination:
-                    log.info('Waiting for instances termination...')
-                termination_timeout = wait_timeout_minutes*60
-                termination_start = time.time()
-
-                while wait_termination and all_instances and time.time() < termination_start+termination_timeout:
-                    all_instances = [i for i in all_instances if i.state != 'terminated']
-                    time.sleep(5)
-                    for i in all_instances:
-                        i.update()
-                # The log says the destruction is Done but is still running, just chill and enjoy the ride
-                log.info('Done.')
+            wait_for_intances_to_terminate(cluster_name, wait_termination, wait_timeout_minutes, all_instances)
     # Here is the exception of the try if we don't find the cluster
     except Exception as e:
         log.info('Does not exist %s', cluster_name)
+        pass
+
+def wait_for_intances_to_terminate(cluster_name, wait_termination=False, wait_timeout_minutes=10, all_instances=[]):
+    # To better view about what the script is doing i choose to let the same code of the destroy i have updated
+    if all_instances:        
+        log.info('The %s will be terminated:', cluster_name)
+        for i in all_instances:
+            log.info('-> %s' % (i.public_dns_name or i.private_dns_name))        
+
+        if wait_termination:
+            log.info('Waiting for instances termination...')
+        termination_timeout = wait_timeout_minutes*60
+        termination_start = time.time()
+
+        while wait_termination and all_instances and time.time() < termination_start+termination_timeout:
+            all_instances = [i for i in all_instances if i.state != 'terminated']
+            time.sleep(5)
+            for i in all_instances:
+                i.update()
+        # The log says the destruction is Done but is still running, just chill and enjoy the ride
+        log.info('Done.')
 
 
 def get_master(cluster_name, region=default_region):
