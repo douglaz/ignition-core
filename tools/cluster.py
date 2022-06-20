@@ -14,7 +14,7 @@ from argh.decorators import named, arg
 import subprocess
 from subprocess import check_output, check_call
 from utils import tag_instances, get_masters, get_active_nodes, get_active_nodes_by_tag
-from utils import check_call_with_timeout, check_call_with_timeout_describe
+from utils import check_call_with_timeout, check_call_with_timeout_describe, destroy_by_request_spot_ids
 import os
 import sys
 from datetime import datetime
@@ -381,7 +381,11 @@ def destroy(cluster_name, wait_termination=False, vpc=default_vpc, wait_timeout_
     assert not delete_groups, 'Delete groups is deprecated and unsupported'
     masters, slaves = get_active_nodes(cluster_name, region=region)
     
-    try:    # First we test if exist the cluster with the function cluster_exists        
+    try: # First we test if exist the cluster with the function cluster_exists        
+        # get instances ids by json return and cancel the requests
+        wait_for_intances_to_terminate(cluster_name, wait_termination, wait_timeout_minutes, destroy_by_request_spot_ids(region, cluster_name))
+        
+        # test if the cluster exists and call destroy by fintorock to destroy it
         if(destroy_by_flyntrock(region, cluster_name, vpc, script_timeout_total_minutes, script_timeout_inactivity_minutes, wait_termination, wait_timeout_minutes)):
             # Here we use the script to destroy the cluster using the name of it
             all_instances = masters + slaves
@@ -397,7 +401,7 @@ def wait_for_intances_to_terminate(cluster_name, wait_termination=False, wait_ti
     if all_instances:        
         log.info('The %s will be terminated:', cluster_name)
         for i in all_instances:
-            log.info('-> %s' % (i.public_dns_name or i.private_dns_name))        
+            log.info('-> %s' % (i.public_dns_name or i.private_dns_name or i.id))        
 
         if wait_termination:
             log.info('Waiting for instances termination...')
