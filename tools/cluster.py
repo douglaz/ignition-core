@@ -302,6 +302,7 @@ def launch(cluster_name, slaves,
                                  '--ec2-security-group', security_group,
                                  '--ec2-user', installation_user,
                                  '--ec2-user-data', user_data,
+                                 '--launch-template-name', cluster_name,
                                  cluster_name] +
                                 spot_params +
                                 auth_params +
