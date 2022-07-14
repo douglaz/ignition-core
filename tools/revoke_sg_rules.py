@@ -51,53 +51,36 @@ def revoke_flintrock_sg_ingress(region, vpc_id):
     """
     
     response = _get_security_group(region=region, vpc_id=vpc_id)
-    # variables required to delete rule
-    cidr_to_revoke_rules = _client_cidr()
-    group_id = ''
-    group_name = ''
-    from_port = ''
-    to_port = ''
-    ip_protocol = ''
-    # variable to store the success of the 
-    # loop and give the right return message
-    success = False
-
     security_groups = response["SecurityGroups"]
+    cidr_to_revoke_rules = _client_cidr()
+    
+    if not len(security_groups):
+        raise 'There is no security groups in the vpc {} at region {}'.format(vpc_id, region)
 
-    if len(security_groups) == 0:
-        return 'There is no security groups in the vpc {} at region {}'.format(vpc_id, region)
-
-    for sg in security_groups:
-        group_id = sg['GroupId']
-        group_name = sg['GroupName']
-        if group_name == 'flintrock':
-            for ip in sg['IpPermissions']:
-                if 'FromPort' in ip:
-                    from_port = ip['FromPort']
-                    ip_protocol = ip['IpProtocol']
-                    to_port = ip['ToPort']
-                    for cidr in ip['IpRanges']:
-                        # identifying which rules contain the local IP range
-                        if cidr['CidrIp'] == cidr_to_revoke_rules:
-                            try:
-                                _delete_rule(
-                                    cidr_ip=cidr['CidrIp'],
-                                    ip_protocol=ip_protocol,
-                                    from_port=from_port,
-                                    to_port=to_port,
-                                    group_id=group_id,
-                                    region=region
-                                )
-                                success = True
-                            except ClientError as error:
-                                raise error
-                       
-
-    if not success:
-        return 'There is no rule from this client to delete in the vpc id: {}.'.format(vpc_id)
-        
-    else:
-        return 'Successfully deleted the rules from this client in the vpc id: {}.'.format(vpc_id)
+     for security_group in security_groups:
+        for ip_permission in security_group['IpPermissions']:
+            for ip_range in ip_permission['IpRanges']:
+                group_id = security_group['GroupId']
+                group_name = security_group['GroupName']
+                from_port = ip_permission['FromPort']
+                ip_protocol = ip_permission['IpProtocol']
+                to_port = ip_permission['ToPort']
+                
+                if group_name == 'flintrock' and  'FromPort' in ip_permission and ip_range['CidrIp'] == cidr_to_revoke_rules:
+                    try:
+                        _delete_rule(
+                            cidr_ip=ip_range['CidrIp'],
+                            ip_protocol=ip_protocol,
+                            from_port=from_port,
+                            to_port=to_port,
+                            group_id=group_id,
+                            region=region
+                        )
+                    except ClientError as error:
+                        print('There is no rule from this client to delete in the vpc id: {}.'.format(vpc_id))
+                        raise error
+                        
+    print('Successfully deleted the rules from this client in the vpc id: {}.'.format(vpc_id))
 
 
 if __name__ == '__main__':
