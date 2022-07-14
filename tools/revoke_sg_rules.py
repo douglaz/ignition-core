@@ -111,11 +111,8 @@ def revoke_flintrock_sg_ingress(region, vpc_id):
                     print(error)
     
     # check again to confirm if the rules were revoked
-    status = False
-    while not status:
-        status = _exists_cidr_in_sg(region=region, cidr=cidr_to_revoke_rules, sg_id=flintrock_group_id)
-
-    print('Successfully deleted rules of this client from flintrock security group at vpc {}'.format(vpc_id))
+    if not _exists_cidr_in_sg(region=region, cidr=cidr_to_revoke_rules, sg_id=flintrock_group_id):
+        print('Successfully deleted rules of this client from flintrock security group at vpc {}'.format(vpc_id))
 
 
 if __name__ == '__main__':
