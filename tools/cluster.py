@@ -383,6 +383,14 @@ def destroy(cluster_name, wait_termination=False, vpc=default_vpc, wait_timeout_
     
     try: # First we test if exist the cluster with the function cluster_exists        
         # get instances ids by json return and cancel the requests
+        
+        # if in dev environment, will delete the flintrock SG rules of the machine running this script
+        if os.getenv('ENVIRONMENT') == 'development':
+            revoke_sg_script = os.path.join(script_path, 'revoke_sg_rules.py')
+            process = subprocess.Popen(["python3", revoke_sg_script, region, vpc], stdout=subprocess.PIPE)
+            stdout_str = process.communicate()[0]
+            log.info(stdout_str)
+
         wait_for_intances_to_terminate(cluster_name, wait_termination, wait_timeout_minutes, destroy_by_request_spot_ids(region, cluster_name))
         
         # test if the cluster exists and call destroy by fintorock to destroy it
