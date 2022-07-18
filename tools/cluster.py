@@ -297,7 +297,6 @@ def launch(cluster_name, slaves,
                                  '--ec2-key-name', key_id,
                                  '--num-slaves', slaves,
                                  '--ec2-region', region,
-                                 '--ec2-availability-zone', zone,
                                  '--ec2-instance-type', instance_type,
                                  '--ec2-min-root-ebs-size-gb', min_root_ebs_size_gb,
                                  '--assume-yes',
@@ -311,6 +310,7 @@ def launch(cluster_name, slaves,
                                  '--ec2-security-group', security_group,
                                  '--ec2-user', installation_user,
                                  '--ec2-user-data', user_data,
+                                 '--launch-template-name', cluster_name,
                                  cluster_name] +
                                 spot_params +
                                 auth_params +
