@@ -14,7 +14,7 @@ from argh.decorators import named, arg
 import subprocess
 from subprocess import check_output, check_call
 from utils import tag_instances, get_masters, get_active_nodes, get_active_nodes_by_tag
-from utils import check_call_with_timeout, check_call_with_timeout_describe, destroy_by_request_spot_ids
+from utils import check_call_with_timeout, check_call_with_timeout_describe, destroy_by_fleet_id
 import os
 import sys
 from datetime import datetime
@@ -383,7 +383,7 @@ def destroy(cluster_name, wait_termination=False, vpc=default_vpc, wait_timeout_
     
     try: # First we test if exist the cluster with the function cluster_exists        
         # get instances ids by json return and cancel the requests
-        
+
         # if in dev environment, will delete the flintrock SG rules of the machine running this script
         if os.getenv('ENVIRONMENT') == 'development':
             revoke_sg_script = os.path.join(script_path, 'revoke_sg_rules.py')
@@ -391,10 +391,10 @@ def destroy(cluster_name, wait_termination=False, vpc=default_vpc, wait_timeout_
             stdout_str = process.communicate()[0]
             log.info(stdout_str)
 
-        wait_for_intances_to_terminate(cluster_name, wait_termination, wait_timeout_minutes, destroy_by_request_spot_ids(region, cluster_name))
+        wait_for_intances_to_terminate(cluster_name, wait_termination, wait_timeout_minutes, destroy_by_fleet_id(region, cluster_name))
         
         # test if the cluster exists and call destroy by fintorock to destroy it
-        if(destroy_by_flyntrock(region, cluster_name, vpc, script_timeout_total_minutes, script_timeout_inactivity_minutes, wait_termination, wait_timeout_minutes)):
+        if destroy_by_flyntrock(region, cluster_name, vpc, script_timeout_total_minutes, script_timeout_inactivity_minutes, wait_termination, wait_timeout_minutes):
             # Here we use the script to destroy the cluster using the name of it
             all_instances = masters + slaves
             # To better view about what the script is doing i choose to let the same code of the destroy i have updated

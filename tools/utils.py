@@ -1,5 +1,7 @@
 #!/usr/bin/env python
+import ast
 import logging
+from pprint import pprint
 import boto.ec2
 import sys
 import subprocess
@@ -52,87 +54,78 @@ def get_active_nodes_by_tag(region, tag_name, tag_value):
     filter = {"tag:{0}".format(tag_name):["{0}".format(tag_value)], "instance-state-name":["running"]}
     return conn.get_only_instances(filters=filter)
 
-def get_requests_ids_by_cluster_name(cluster_name):
+def get_fleet_id_by_cluster_name(cluster_name):
     # create a array with the requests ids
-    requests_ids = []
-    folder_full_path = os.path.abspath(os.getcwd())
+    fleet_id = ''
+    file_name = '{0}.json'.format(cluster_name)
 
     if folder_log_path:
         # check if the folder exists and if not create it
-        folderExist = exists(folder_log_path)
-
-        if folderExist != True:
+        if not exists(folder_log_path):
             makedirs(folder_log_path)
     
         file_name = '{0}/{1}.json'.format(folder_log_path, cluster_name)
-    else:
-        file_name = '{0}.json'.format(cluster_name)
 
     # verify if the file exists
-    file_exists = exists(file_name)
-    
-    if file_exists:
+    if exists(file_name):
         # open a json log file if exists
-        json_file = open(file_name)
+        with open(file_name) as json_file:# deserialize the json file to object
+            json_content = json.load(json_file)
+            
+            # create a array with the requests ids
+            for request in json_content:
+                fleet_id = str(request['FleetId'])
 
-        # deserialize the json file to object
-        json_content = json.load(json_file)
-
-        # create a array with the requests ids
-        for request_id in json_content:
-            requests_ids.append(str(request_id['SpotInstanceRequestId']))
-
-    return requests_ids
+    return fleet_id
 
 
-def destroy_by_request_spot_ids(region, cluster_name):
+def destroy_by_fleet_id(region, cluster_name):
     conn = boto.ec2.connect_to_region(region)
+    fleet_instances_ids = []
     instances = []
     
     try:
         # get requets ids from json log file
-        request_ids = get_requests_ids_by_cluster_name(cluster_name)
-        logging.info('The amount of requests ids found in json log file: {0}'.format(len(request_ids)))
-        instances_cancelled = []
+        fleet_id = get_fleet_id_by_cluster_name(cluster_name)
+        logging.info('The fleet id found in json log file: {0}'.format(fleet_id))
         
-        # test if the request has any id
-        if len(request_ids) > 0:
-            spot_requests = conn.get_all_spot_instance_requests()
-            for request in request_ids:
-                for spot_request in spot_requests:                    
-                    if request == spot_request.id:
-                        # cancel the requests returned before
-                        conn.cancel_spot_instance_requests(request)
-                        instances_cancelled.append(spot_request)
+        # call an external script to delete the fleet and retrieve the list of instances
+        delete_fleet_script = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'delete_fleet.py')
+        process = subprocess.Popen(["python3", delete_fleet_script, region, fleet_id], stdout=subprocess.PIPE)
+        stdout_str = process.communicate()[0]
 
-            # verify if the cancelled list is not empty
-            if len(instances_cancelled) > 0:
-                instances_ids = []
-        
-                # create the instance list of machines based on requests ids
-                for request_cancelled in instances_cancelled:
-                    if request_cancelled.instance_id:
-                        instances_ids.append(request_cancelled.instance_id)
-                
-                # test if the instance id is not empty
-                if len(instances_ids) > 0:
-                    instances_requested = conn.get_only_instances(instances_ids)
+        # the subprocess return a string with the character '\n' separating the delete message and the list of instances 
+        stdout_str_split = stdout_str.split('\n')
 
-                    # terminate instances from request spot
-                    for instance in instances_requested:
-                        # checking again if the object is in the list to not terminate wrong machines
-                        if instances_ids.index(instance.id) > -1:
-                            if instance.state == 'running':
-                                logging.info('Terminating instance: {0}'.format(instance.id))
-                                # add only instances that are running to return list
-                                instances.append(instance)
-                                # terminate the instance
-                                instance.terminate()
-                            elif instance.state == 'shutting-down':
-                                # add the instance to the wait list
-                                instances.append(instance)
+        # message of fleet deletion
+        deleted_fleet = stdout_str_split[0]
+        logging.info(deleted_fleet)
+
+        # getting the list of the string containing the list of istances
+        # e.g."['i-0e90a67a64693dc39', 'i-00889275ebe58bb7b', 'i-0982e3e6728044bef']"
+        fleet_instances = ast.literal_eval(stdout_str_split[1])
+        fleet_instances_ids.extend(fleet_instances)
+
+        # test if the instance id is not empty
+        if len(fleet_instances_ids) > 0:
+            instances_requested = conn.get_only_instances(fleet_instances_ids)
+
+            # terminate instances from request spot
+            for instance in instances_requested:
+                # checking again if the object is in the list to not terminate wrong machines
+                if fleet_instances_ids.index(instance.id) > -1:
+                    if instance.state == 'running':
+                        logging.info('Terminating instance: {0}'.format(instance.id))
+                        # add only instances that are running to return list
+                        instances.append(instance)
+                        # terminate the instance
+                        instance.terminate()
+                    elif instance.state == 'shutting-down':
+                        # add the instance to the wait list
+                        instances.append(instance)
 
     except Exception as e:
+        logging.error(e)
         logging.error('Error to destroy cluster {0} by request ids.'.format(cluster_name))
         pass
 
