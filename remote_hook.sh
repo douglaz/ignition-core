@@ -126,7 +126,7 @@ elif [[ "${JOB_NAME}" == "jupyter" ]]; then
 else
     JOB_OUTPUT="${JOB_CONTROL_DIR}/output.log"
     tail -F "${JOB_OUTPUT}" &
-    sudo -E "${SPARK_HOME}/bin/spark-submit" --master "${JOB_MASTER}" --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps " --conf "spark.driver.extraJavaOptions=-javaagent:/tmp/jmx/jmx_prometheus_javaagent-0.17.0.jar=9095:/tmp/jmx/spark.yml" --class "${MAIN_CLASS}" ${JAR_PATH} "${JOB_NAME}" --runner-date "${JOB_DATE}" --runner-tag "${JOB_TAG}" --runner-user "${JOB_USER}" --runner-master "${JOB_MASTER}" --runner-executor-memory "${SPARK_MEM_PARAM}" "$@" >& "${JOB_OUTPUT}"  || notify_error_and_exit "Execution failed for job ${JOB_WITH_TAG}"
+    sudo -E "${SPARK_HOME}/bin/spark-submit" --master "${JOB_MASTER}" --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps " --conf "spark.driver.extraJavaOptions=-javaagent:/tmp/jmx/jmx_prometheus_javaagent-0.17.0.jar=9095:/tmp/jmx/spark.yml" --class "spark.metrics.conf=/tmp/jmx/metrics.properties" --class "${MAIN_CLASS}" ${JAR_PATH} "${JOB_NAME}" --runner-date "${JOB_DATE}" --runner-tag "${JOB_TAG}" --runner-user "${JOB_USER}" --runner-master "${JOB_MASTER}" --runner-executor-memory "${SPARK_MEM_PARAM}" "$@" >& "${JOB_OUTPUT}"  || notify_error_and_exit "Execution failed for job ${JOB_WITH_TAG}"
 fi
 
 touch "${JOB_CONTROL_DIR}/SUCCESS"
