@@ -85,8 +85,12 @@ def destroy_by_fleet_id(region, cluster_name):
     instances = []
     
     try:
-        # get requets ids from json log file
+        # get fleet id from json log file
         fleet_id = get_fleet_id_by_cluster_name(cluster_name)
+
+        if fleet_id in [None, '']:
+            raise Exception('There is no fleet id to delete. Keep going.')
+
         logging.info('The fleet id found in json log file: {0}'.format(fleet_id))
         
         # call an external script to delete the fleet and retrieve the list of instances
@@ -106,8 +110,8 @@ def destroy_by_fleet_id(region, cluster_name):
         fleet_instances = ast.literal_eval(stdout_str_split[1])
         fleet_instances_ids.extend(fleet_instances)
 
-        # test if the instance id is not empty
-        if len(fleet_instances_ids) > 0:
+        # test if the instance id is not empty and contains an instance id for sure
+        if len(fleet_instances_ids) > 0 and fleet_instances_ids[0].startswith('i-'):
             instances_requested = conn.get_only_instances(fleet_instances_ids)
 
             # terminate instances from request spot
@@ -126,7 +130,7 @@ def destroy_by_fleet_id(region, cluster_name):
 
     except Exception as e:
         logging.error(e)
-        logging.error('Error to destroy cluster {0} by request ids.'.format(cluster_name))
+        logging.error('Error to destroy cluster {0} by fleet id.'.format(cluster_name))
         pass
 
     return instances

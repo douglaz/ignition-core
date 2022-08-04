@@ -11,8 +11,12 @@ def describe_fleets(region, fleet_id):
             fleet_id
         ],
     )
-
-    return response['Fleets'][0]['Instances'][0]['InstanceIds']
+    errors = response['Fleets'][0]['Errors']
+    instances = response['Fleets'][0]['Instances']
+    # to ensure we are returning an array anyway
+    if len(errors) > 0 and len(instances) == 0:
+        return ['']
+    return instances[0]['InstanceIds']
 
 def delete_fleet(region, fleet_id):
     ec2 = boto3.client('ec2', region_name=region)
@@ -42,5 +46,4 @@ if __name__ == '__main__':
         print(describe_fleets(region=region, fleet_id=fleet_id))
     except (ClientError, Exception) as e:
         print(e)
-  
   

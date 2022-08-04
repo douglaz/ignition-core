@@ -30,10 +30,10 @@ echo $$ > "${RUNNING_FILE}"
 
 
 # Let us read the spark home even when the image doesn't give us the permission
-sudo chmod o+rx /root
-sudo chmod -R o+rx /root/spark
+sudo chmod o+rx /home/ec2-user
+sudo chmod -R o+rx /home/ec2-user/spark
 
-sudo mkdir -p /media/tmp/spark-events
+mkdir -p /media/tmp/spark-events
 
 notify_error_and_exit() {
     description="${1}"
@@ -70,7 +70,7 @@ install_and_run_zeppelin() {
         export ZEPPELIN_PORT="8081"
         export SPARK_HOME=$(get_first_present /root/spark /opt/spark ~/spark*/)
         export SPARK_SUBMIT_OPTIONS="--jars ${JAR_PATH} --executor-memory ${SPARK_MEM_PARAM}"
-        sudo -E zeppelin/bin/zeppelin.sh
+        zeppelin/bin/zeppelin.sh
     else
         notify_error_and_exit "Zeppelin installation not found"
     fi
@@ -88,7 +88,7 @@ install_and_run_jupyter() {
     export PYSPARK_DRIVER_PYTHON=$(which jupyter)
     export PYSPARK_DRIVER_PYTHON_OPTS="notebook --allow-root --ip=${SPARK_MASTER_HOST} --no-browser --port=8888"
     sudo $(which jupyter) toree install --spark_home="${SPARK_HOME}" --spark_opts="--master ${JOB_MASTER} --executor-memory ${SPARK_MEM_PARAM} --driver-memory ${DRIVER_HEAP_SIZE}"
-    sudo -E "${SPARK_HOME}/bin/pyspark" --master "${JOB_MASTER}" --executor-memory "${SPARK_MEM_PARAM}" --driver-memory "${DRIVER_HEAP_SIZE}"
+    ${SPARK_HOME}/bin/pyspark --master "${JOB_MASTER}" --executor-memory "${SPARK_MEM_PARAM}" --driver-memory "${DRIVER_HEAP_SIZE}"
 }
 
 trap "on_trap_exit" EXIT
@@ -118,7 +118,7 @@ if [[ "${USE_YARN}" == "yes" ]]; then
 fi
 
 if [[ "${JOB_NAME}" == "shell" ]]; then
-    sudo -E ${SPARK_HOME}/bin/spark-shell --master "${JOB_MASTER}" --jars ${JAR_PATH} --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --executor-memory "${SPARK_MEM_PARAM}" || notify_error_and_exit "Execution failed for shell"
+    ${SPARK_HOME}/bin/spark-shell --master "${JOB_MASTER}" --jars ${JAR_PATH} --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --executor-memory "${SPARK_MEM_PARAM}" || notify_error_and_exit "Execution failed for shell"
 elif [[ "${JOB_NAME}" == "zeppelin" ]]; then
     install_and_run_zeppelin
 elif [[ "${JOB_NAME}" == "jupyter" ]]; then
@@ -126,7 +126,7 @@ elif [[ "${JOB_NAME}" == "jupyter" ]]; then
 else
     JOB_OUTPUT="${JOB_CONTROL_DIR}/output.log"
     tail -F "${JOB_OUTPUT}" &
-    sudo -E "${SPARK_HOME}/bin/spark-submit" --master "${JOB_MASTER}" --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps " --conf "spark.driver.extraJavaOptions=-javaagent:/tmp/jmx/jmx_prometheus_javaagent-0.17.0.jar=9095:/tmp/jmx/spark.yml" --conf "spark.metrics.conf=/tmp/jmx/metrics.properties" --class "${MAIN_CLASS}" ${JAR_PATH} "${JOB_NAME}" --runner-date "${JOB_DATE}" --runner-tag "${JOB_TAG}" --runner-user "${JOB_USER}" --runner-master "${JOB_MASTER}" --runner-executor-memory "${SPARK_MEM_PARAM}" "$@" >& "${JOB_OUTPUT}"  || notify_error_and_exit "Execution failed for job ${JOB_WITH_TAG}"
+    ${SPARK_HOME}/bin/spark-submit --master "${JOB_MASTER}" --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps " --conf "spark.driver.extraJavaOptions=-javaagent:/tmp/jmx/jmx_prometheus_javaagent-0.17.0.jar=9095:/tmp/jmx/spark.yml" --conf "spark.metrics.conf=/tmp/jmx/metrics.properties" --class "${MAIN_CLASS}" ${JAR_PATH} "${JOB_NAME}" --runner-date "${JOB_DATE}" --runner-tag "${JOB_TAG}" --runner-user "${JOB_USER}" --runner-master "${JOB_MASTER}" --runner-executor-memory "${SPARK_MEM_PARAM}" "$@" >& "${JOB_OUTPUT}" || notify_error_and_exit "Execution failed for job ${JOB_WITH_TAG}"
 fi
 
 touch "${JOB_CONTROL_DIR}/SUCCESS"
