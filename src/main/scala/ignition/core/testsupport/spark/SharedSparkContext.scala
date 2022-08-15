@@ -33,6 +33,7 @@ trait SharedSparkContext extends BeforeAndAfterAll { self: Suite =>
     //Logger.getRootLogger().removeAllAppenders();
     //Logger.getRootLogger().addAppender(new NullAppender());
     _sc = new SparkContext("local", "test", conf)
+    _sc.setLogLevel("OFF")
     super.beforeAll()
   }
 

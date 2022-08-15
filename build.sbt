@@ -2,37 +2,31 @@ name := "Ignition-Core"
 
 version := "1.0"
 
-scalaVersion := "2.10.4"
+scalaVersion := "2.11.12"
 
-scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-Xfatal-warnings")
-
-ideaExcludeFolders += ".idea"
-
-ideaExcludeFolders += ".idea_modules"
+scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-Xfatal-warnings", "-Xlint", "-Ywarn-dead-code", "-Xmax-classfile-name", "130")
 
 // Because we can't run two spark contexts on same VM
 parallelExecution in Test := false
 
-libraryDependencies += ("org.apache.spark" %% "spark-core" % "1.3.0" % "provided").exclude("org.apache.hadoop", "hadoop-client")
+test in assembly := {}
 
-libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "2.0.0-cdh4.7.1" % "provided")
+libraryDependencies += "org.apache.spark" %% "spark-sql" % "2.4.3" % "provided"
 
-libraryDependencies += "com.github.nscala-time" %% "nscala-time" % "0.8.0"
+libraryDependencies += "org.apache.hadoop" % "hadoop-client" % "2.7.6" % "provided"
 
-libraryDependencies += "org.scalatest" % "scalatest_2.10" % "2.0"
+libraryDependencies += "org.apache.hadoop" % "hadoop-aws" % "2.7.6" % "provided"
 
-libraryDependencies += "org.scalaj" %% "scalaj-http" % "0.3.16"
+libraryDependencies += "com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided"
 
-libraryDependencies += "org.scalaz" %% "scalaz-core" % "7.0.6"
+libraryDependencies += "org.scalaz" %% "scalaz-core" % "7.2.27"
 
-libraryDependencies += "com.github.scopt" %% "scopt" % "3.2.0"
+libraryDependencies += "com.github.scopt" %% "scopt" % "3.6.0"
 
-libraryDependencies += "net.java.dev.jets3t" % "jets3t" % "0.7.1"
+libraryDependencies += "joda-time" % "joda-time" % "2.9.9"
 
-resolvers += "Akka Repository" at "http://repo.akka.io/releases/"
+libraryDependencies += "org.joda" % "joda-convert" % "1.8.2"
 
-resolvers += "Sonatype OSS Releases" at "http://oss.sonatype.org/content/repositories/releases/"
+libraryDependencies += "org.slf4j" % "slf4j-api" % "1.7.25"
 
-resolvers += "Cloudera Repository" at "https://repository.cloudera.com/artifactory/cloudera-repos/"
-
-resolvers += Resolver.sonatypeRepo("public")
+libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.3"

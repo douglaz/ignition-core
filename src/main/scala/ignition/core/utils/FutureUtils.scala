@@ -1,18 +1,51 @@
 package ignition.core.utils
 
-import scala.concurrent.{ExecutionContext, Future, Promise}
-import scala.util.{Failure, Success}
+import scala.concurrent.{ExecutionContext, Future, Promise, blocking}
+import scala.util.control.NonFatal
+import scala.util.{Failure, Success, Try}
 
 object FutureUtils {
+
+  def blockingFuture[T](body: =>T)(implicit ec: ExecutionContext): Future[T] = Future { blocking { body } }
+
 
   implicit class FutureImprovements[V](future: Future[V]) {
     def toOptionOnFailure(errorHandler: (Throwable) => Option[V])(implicit ec: ExecutionContext): Future[Option[V]] = {
       future.map(Option.apply).recover { case t => errorHandler(t) }
     }
+
+    /**
+     * Appear to be redundant. But its the only way to map a future with
+     * Success and Failure in same algorithm without split it to use map/recover
+     * or transform.
+     *
+     * future.asTry.map { case Success(v) => 1; case Failure(e) => 0 }
+     *
+     * instead
+     *
+     * future.map(i=>1).recover(case _: Exception => 0)
+     *
+     */
+    def asTry()(implicit ec: ExecutionContext) : Future[Try[V]] = {
+      future.map(v => Success(v)).recover { case NonFatal(e) => Failure(e) }
+    }
+
+  }
+
+  implicit class TryFutureImprovements[V](future: Try[Future[V]]) {
+    // Works like asTry(), but will also wrap the outer Try inside the Future
+    def asFutureTry()(implicit ec: ExecutionContext): Future[Try[V]] = {
+      future match {
+        case Success(f) =>
+          f.asTry()
+        case Failure(e) =>
+          Future.successful(Failure(e))
+      }
+    }
   }
 
   implicit class FutureGeneratorImprovements[V](generator: Iterable[() => Future[V]]){
-    def toLazyIterable(batchSize: Int = 1)(implicit ec: ExecutionContext): Iterable[Future[V]] = new Iterable[Future[V]] {
+    def toLazyIterable(batchSize: Int = 1): Iterable[Future[V]] = new Iterable[Future[V]] {
       override def iterator =  new Iterator[Future[V]] {
         val generatorIterator = generator.toIterator
         var currentBatch: List[Future[V]] = List.empty

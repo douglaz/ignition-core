@@ -7,14 +7,14 @@ This line is to make pylint happy
 
 """
 
+from cgitb import reset
 import argh
 from argh import ArghParser, CommandError
 from argh.decorators import named, arg
 import subprocess
 from subprocess import check_output, check_call
-from itertools import chain
-from utils import tag_instances, get_masters, get_active_nodes
-from utils import check_call_with_timeout, ProcessTimeoutException
+from utils import tag_instances, get_masters, get_active_nodes, get_active_nodes_by_tag
+from utils import check_call_with_timeout, check_call_with_timeout_describe, destroy_by_fleet_id
 import os
 import sys
 from datetime import datetime
@@ -23,7 +23,8 @@ import logging
 import getpass
 import json
 import glob
-
+import webbrowser
+import ssl
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -38,28 +39,32 @@ script_path = os.path.dirname(os.path.realpath(__file__))
 default_instance_type = 'r3.xlarge'
 default_spot_price = '0.10'
 default_worker_instances = '1'
-default_master_instance_type = 'm3.xlarge'
+default_executor_instances = '1'
+default_master_instance_type = ''
+default_driver_heap_size = '12G'
+default_min_root_ebs_size_gb = '30'
 default_region = 'us-east-1'
 default_zone = default_region + 'b'
 default_key_id = 'ignition_key'
 default_key_file = os.path.expanduser('~/.ssh/ignition_key.pem')
-default_ami = None # will be decided based on spark-ec2 list
-default_master_ami = None
+default_ami = 'ami-611e7976'
+default_master_ami = ''
 default_env = 'dev'
-default_spark_version = '1.3.0'
-default_spark_repo = 'https://github.com/chaordic/spark'
+default_spark_version = '2.4.3'
+default_hdfs_version = '2.7.6'
+default_spark_download_source = 'https://s3.amazonaws.com/chaordic-ignition-public/spark-{v}-bin-hadoop2.7.tgz'
+default_hdfs_download_source = 'https://s3.amazonaws.com/chaordic-ignition-public/hadoop-{v}.tar.gz'
 default_remote_user = 'ec2-user'
+default_installation_user = 'ec2-user'
 default_remote_control_dir = '/tmp/Ignition'
 default_collect_results_dir = '/tmp'
-default_user_data = os.path.join(script_path, 'scripts', 'S05mount-disks')
+default_user_data = os.path.join(script_path, 'scripts', 'noop')
 default_defaults_filename = 'cluster_defaults.json'
-
-default_spark_ec2_git_repo = 'https://github.com/chaordic/spark-ec2'
-default_spark_ec2_git_branch = 'v4-yarn'
+default_vpc='vpc-94215df1'
 
 
 master_post_create_commands = [
-    'sudo', 'yum', '-y', 'install', 'tmux'
+    ['sudo', 'yum', '-y', 'install', 'tmux'],
 ]
 
 
@@ -111,8 +116,10 @@ def logged_call(args, tries=1):
     return logged_call_base(check_call, args, tries)
 
 
-def ssh_call(user, host, key_file, args=(), allocate_terminal=True, get_output=False):
-    base = ['ssh', '-q']
+def ssh_call(user, host, key_file, args=(), allocate_terminal=True, get_output=False, quiet=False):
+    base = ['ssh']
+    if quiet:
+        base += ['-q']
     if allocate_terminal:
         base += ['-tt']
     base += ['-i', key_file,
@@ -120,24 +127,34 @@ def ssh_call(user, host, key_file, args=(), allocate_terminal=True, get_output=F
              '{0}@{1}'.format(user, host)]
     base += args
     if get_output:
-        return logged_call_output(base)
+        return logged_call_output(base).decode("utf-8")
     else:
         return logged_call(base)
 
+def ec2_script_base_path():
+    return os.path.join(script_path, 'flintrock')
 
 def chdir_to_ec2_script_and_get_path():
-    ec2_script_base = os.path.join(script_path, 'spark-ec2')
+    ec2_script_base = ec2_script_base_path()
     os.chdir(ec2_script_base)
-    ec2_script_path = os.path.join(ec2_script_base, 'spark_ec2.py')
+    ec2_script_path = os.path.join(ec2_script_base, 'standalone.py')
     return ec2_script_path
 
 
-def call_ec2_script(args, timeout_total_minutes, timeout_inactivity_minutes):
+def call_ec2_script(args, timeout_total_minutes, timeout_inactivity_minutes, stdout=None):
     ec2_script_path = chdir_to_ec2_script_and_get_path()
-    return check_call_with_timeout(['/usr/bin/env', 'python', '-u',
+    return check_call_with_timeout(['/usr/bin/env', 'python3', '-u',
                                     ec2_script_path] + args,
-                                   timeout_total_minutes=timeout_total_minutes,
-                                   timeout_inactivity_minutes=timeout_inactivity_minutes)
+                                    stdout=stdout,
+                                    timeout_total_minutes=timeout_total_minutes,
+                                    timeout_inactivity_minutes=timeout_inactivity_minutes)
+def call_ec2_script_describe(args, timeout_total_minutes, timeout_inactivity_minutes, stdout=None):
+    ec2_script_path = chdir_to_ec2_script_and_get_path()
+    return check_call_with_timeout_describe(['/usr/bin/env', 'python3', '-u',
+                                    ec2_script_path] + args,
+                                    stdout=stdout,
+                                    timeout_total_minutes=timeout_total_minutes,
+                                    timeout_inactivity_minutes=timeout_inactivity_minutes)
 
 
 def cluster_exists(cluster_name, region):
@@ -164,18 +181,22 @@ def save_cluster_args(master, key_file, remote_user, all_args):
              args=["echo '{}' > /tmp/cluster_args.json".format(json.dumps(all_args))])
 
 def load_cluster_args(master, key_file, remote_user):
-    return json.loads(ssh_call(user=remote_user, host=master, key_file=key_file,
+    return json.loads(ssh_call(user=remote_user, host=master, key_file=key_file, allocate_terminal=False,
                                args=["cat", "/tmp/cluster_args.json"], get_output=True))
 
 # Util to be used by external scripts
 def save_extra_data(data_str, cluster_name, region=default_region, key_file=default_key_file, remote_user=default_remote_user, master=None):
     master = master or get_master(cluster_name, region=region)
-    ssh_call(user=remote_user, host=master, key_file=key_file,
-             args=["echo '{}' > /tmp/cluster_extra_data.txt".format(data_str)])
+    cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', remote_user + '@' + master , '-i', key_file, '/bin/bash', '-c', 'cat > /tmp/cluster_extra_data.txt']
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    p.communicate(data_str)
+    if p.wait() != 0:
+        raise Exception('Error saving extra data on master')
+
 
 def load_extra_data(cluster_name, region=default_region, key_file=default_key_file, remote_user=default_remote_user, master=None):
     master = master or get_master(cluster_name, region=region)
-    return ssh_call(user=remote_user, host=master, key_file=key_file,
+    return ssh_call(user=remote_user, host=master, key_file=key_file, allocate_terminal=False,
                     args=["cat", "/tmp/cluster_extra_data.txt"], get_output=True)
 
 
@@ -201,90 +222,103 @@ def launch(cluster_name, slaves,
            tag=[],
            key_id=default_key_id, region=default_region,
            zone=default_zone, instance_type=default_instance_type,
-           ondemand=False, spot_price=default_spot_price,
+           # TODO: implement it in flintrock
+           ondemand=False,
+           spot_price=default_spot_price,
+           # TODO: implement it in flintrock
+           master_spot=False,
            user_data=default_user_data,
-           security_group = None,
-           vpc = None,
-           vpc_subnet = None,
+           security_group=None,
+           vpc=None,
+           vpc_subnet=None,
+           # TODO: consider implementing in flintrock
            master_instance_type=default_master_instance_type,
-           wait_time='180', hadoop_major_version='2',
-           worker_instances=default_worker_instances, retries_on_same_cluster=5,
+           executor_instances=default_executor_instances,
+           min_root_ebs_size_gb=default_min_root_ebs_size_gb,
+           retries_on_same_cluster=5,
            max_clusters_to_create=5,
            minimum_percentage_healthy_slaves=0.9,
            remote_user=default_remote_user,
+           installation_user=default_installation_user,
            script_timeout_total_minutes=55,
            script_timeout_inactivity_minutes=10,
-           resume=False, just_ignore_existing=False, worker_timeout=240,
-           spark_repo=default_spark_repo,
+           just_ignore_existing=False,
+           spark_download_source=default_spark_download_source,
            spark_version=default_spark_version,
-           spark_ec2_git_repo=default_spark_ec2_git_repo,
-           spark_ec2_git_branch=default_spark_ec2_git_branch,
-           ami=default_ami, master_ami=default_master_ami):
+           hdfs_download_source=default_hdfs_download_source,
+           hdfs_version=default_hdfs_version,
+           ami=default_ami,
+           # TODO: consider implementing in flintrock
+           master_ami=default_master_ami,
+           instance_profile_name=None):
+
+    assert not master_instance_type or master_instance_type == instance_type, 'Different master instance type is currently unsupported'
+    assert not master_ami or master_ami == ami, 'Different master ami is currently unsupported'
+    assert not ondemand, 'On demand is unsupported'
+    assert master_spot, 'On demand master is currently unsupported'
 
     all_args = locals()
 
-    if cluster_exists(cluster_name, region=region) and not resume:
+    if cluster_exists(cluster_name, region=region):
         if just_ignore_existing:
             log.info('Cluster exists but that is ok')
             return ''
         else:
-            raise CommandError('Cluster already exists, pick another name or resume the setup using --resume')
+            raise CommandError('Cluster already exists, pick another name')
 
     for j in range(max_clusters_to_create):
         log.info('Creating new cluster {0}, try {1}'.format(cluster_name, j+1))
         success = False
-        resume_param = ['--resume'] if resume else []
 
         auth_params = []
-        if security_group:
-            auth_params.extend([
-                '--authorized-address', '127.0.0.1/32',
-                '--additional-security-group', security_group
-            ])
 
         # '--vpc-id', default_vpc,
         # '--subnet-id', default_vpc_subnet,
         if vpc and vpc_subnet:
             auth_params.extend([
-                '--vpc-id', vpc,
-                '--subnet-id', vpc_subnet,
+                '--ec2-vpc-id', vpc,
+                '--ec2-subnet-id', vpc_subnet,
             ])
 
-        spot_params = ['--spot-price', spot_price] if not ondemand else []
-        ami_params = ['--ami', ami] if ami else []
-        master_ami_params = ['--master-ami', master_ami] if master_ami else []
+        spot_params = ['--ec2-spot-price', spot_price] if not ondemand else []
+        #master_spot_params = ['--master-spot'] if not ondemand and master_spot else []
+
+        ami_params = ['--ec2-ami', ami] if ami else []
+        #master_ami_params = ['--master-ami', master_ami] if master_ami else []
+
+        iam_params = ['--ec2-instance-profile-name', instance_profile_name] if instance_profile_name else []
 
         for i in range(retries_on_same_cluster):
             log.info('Running script, try %d of %d', i + 1, retries_on_same_cluster)
             try:
-                call_ec2_script(['--identity-file', key_file,
-                                 '--key-pair', key_id,
-                                 '--slaves', slaves,
-                                 '--region', region,
-                                 '--zone', zone,
-                                 '--instance-type', instance_type,
-                                 '--master-instance-type', master_instance_type,
-                                 '--wait', wait_time,
-                                 '--hadoop-major-version', hadoop_major_version,
-                                 '--spark-ec2-git-repo', spark_ec2_git_repo,
-                                 '--spark-ec2-git-branch', spark_ec2_git_branch,
-                                 '--worker-instances', worker_instances,
-                                 '--master-opts', '-Dspark.worker.timeout={0}'.format(worker_timeout),
-                                 '--spark-git-repo', spark_repo,
-                                 '-v', spark_version,
-                                 '--user-data', user_data,
-                                 'launch', cluster_name] +
+                call_ec2_script(['--debug',
+                                 'launch',
+                                 '--ec2-identity-file', key_file,
+                                 '--ec2-key-name', key_id,
+                                 '--num-slaves', slaves,
+                                 '--ec2-region', region,
+                                 '--ec2-instance-type', instance_type,
+                                 '--ec2-min-root-ebs-size-gb', min_root_ebs_size_gb,
+                                 '--assume-yes',
+                                 '--install-spark',
+                                 '--install-hdfs',
+                                 '--spark-version', spark_version,
+                                 '--hdfs-version', hdfs_version,
+                                 '--spark-download-source', spark_download_source,
+                                 '--hdfs-download-source', hdfs_download_source,
+                                 '--spark-executor-instances', executor_instances,
+                                 '--ec2-security-group', security_group,
+                                 '--ec2-user', installation_user,
+                                 '--ec2-user-data', user_data,
+                                 '--launch-template-name', cluster_name,
+                                 cluster_name] +
                                 spot_params +
-                                resume_param +
                                 auth_params +
                                 ami_params +
-                                master_ami_params,
+                                iam_params,
                                 timeout_total_minutes=script_timeout_total_minutes,
                                 timeout_inactivity_minutes=script_timeout_inactivity_minutes)
                 success = True
-            except subprocess.CalledProcessError as e:
-                resume_param = ['--resume']
-                log.warn('Failed with: %s', e)
             except Exception as e:
                 # Probably a timeout
                 log.exception('Fatal error calling EC2 script')
@@ -300,38 +334,125 @@ def launch(cluster_name, slaves,
                 master = get_master(cluster_name, region=region)
                 save_cluster_args(master, key_file, remote_user, all_args)
                 health_check(cluster_name=cluster_name, key_file=key_file, master=master, remote_user=remote_user, region=region)
-                ssh_call(user=remote_user, host=master, key_file=key_file, args=master_post_create_commands)
+                for command in master_post_create_commands:
+                    ssh_call(user=remote_user, host=master, key_file=key_file, args=command)
                 return master
         except Exception as e:
             log.exception('Got exception on last steps of cluster configuration')
         log.warn('Destroying unsuccessful cluster')
-        destroy(cluster_name=cluster_name, region=region)
-    raise CommandError('Failed to created cluster {} after failures'.format(cluster_name))
+        destroy(cluster_name=cluster_name, region=region, wait_termination=True)
+    raise CommandError('Failed to created cluster {0} after failures'.format(cluster_name))
 
 
-def destroy(cluster_name, delete_groups=False, region=default_region):
-    delete_sg_param = ['--delete-groups'] if delete_groups else []
+def destroy_by_flyntrock(region, cluster_name, vpc=default_vpc, script_timeout_total_minutes=55, script_timeout_inactivity_minutes=10, wait_termination=False, wait_timeout_minutes=10):
+    # create a variable to store the result
+    result = False
+    
+    try: # create a try catch to manage the possible erros
+        cluster = call_ec2_script_describe(['describe', cluster_name,'--ec2-vpc-id',vpc],timeout_total_minutes=script_timeout_total_minutes, timeout_inactivity_minutes=script_timeout_inactivity_minutes)
+        if cluster == cluster_name:
+            call_ec2_script(['destroy','--assume-yes', cluster_name,'--ec2-vpc-id',vpc],timeout_total_minutes=script_timeout_total_minutes, timeout_inactivity_minutes=script_timeout_inactivity_minutes) 
+            result = True
+    except Exception as e:
+        #log.info('Error to destroy cluster {0} by flintrock'.format(cluster_name))
+        destroy_by_cluster_name_tag(region, 'spark_cluster_name', cluster_name, wait_termination, wait_timeout_minutes)
+        pass
 
-    ec2_script_path = chdir_to_ec2_script_and_get_path()
-    p = subprocess.Popen(['/usr/bin/env', 'python', '-u',
-                          ec2_script_path,
-                          'destroy', cluster_name,
-                          '--region', region] + delete_sg_param,
-                         stdin=subprocess.PIPE,
-                         stdout=sys.stdout, universal_newlines=True)
-    p.communicate('y')
+    return result
+
+def destroy_by_cluster_name_tag(region, tag_name, cluster_name, wait_termination, wait_timeout_minutes):
+    instances = get_active_nodes_by_tag(region, tag_name, cluster_name)  
+    
+    if instances:
+        #log.info('Trying to terminate remain instances by id.')
+
+        for instance in instances:
+          #log.info('Terminate instance {0}'.format(instance.id))
+          instance.terminate()
+          log.info('Instance {0} is terminating.'.format(instance.id))
+
+        # call this function to wait instances to terminate
+        wait_for_intances_to_terminate(cluster_name, wait_termination, wait_timeout_minutes, instances)
+    
+    return instances
+
+
+def destroy(cluster_name, wait_termination=False, vpc=default_vpc, wait_timeout_minutes=10, delete_groups=False, region=default_region,script_timeout_total_minutes=55,script_timeout_inactivity_minutes=10):
+    assert not delete_groups, 'Delete groups is deprecated and unsupported'
+    masters, slaves = get_active_nodes(cluster_name, region=region)
+    
+    try: # First we test if exist the cluster with the function cluster_exists        
+        # get instances ids by json return and cancel the requests
+
+        # if in dev environment, will delete the flintrock SG rules of the machine running this script
+        if os.getenv('ENVIRONMENT') == 'development':
+            revoke_sg_script = os.path.join(script_path, 'revoke_sg_rules.py')
+            process = subprocess.Popen(["python3", revoke_sg_script, region, vpc], stdout=subprocess.PIPE)
+            stdout_str = process.communicate()[0]
+            log.info(stdout_str)
+
+        wait_for_intances_to_terminate(cluster_name, wait_termination, wait_timeout_minutes, destroy_by_fleet_id(region, cluster_name))
+        
+        # test if the cluster exists and call destroy by fintorock to destroy it
+        if destroy_by_flyntrock(region, cluster_name, vpc, script_timeout_total_minutes, script_timeout_inactivity_minutes, wait_termination, wait_timeout_minutes):
+            # Here we use the script to destroy the cluster using the name of it
+            all_instances = masters + slaves
+            # To better view about what the script is doing i choose to let the same code of the destroy i have updated
+            wait_for_intances_to_terminate(cluster_name, wait_termination, wait_timeout_minutes, all_instances)
+    # Here is the exception of the try if we don't find the cluster
+    except Exception as e:
+        log.info('Does not exist %s', cluster_name)
+        pass
+
+def wait_for_intances_to_terminate(cluster_name, wait_termination=False, wait_timeout_minutes=10, all_instances=[]):
+    # To better view about what the script is doing i choose to let the same code of the destroy i have updated
+    if all_instances:        
+        log.info('The %s will be terminated:', cluster_name)
+        for i in all_instances:
+            log.info('-> %s' % (i.public_dns_name or i.private_dns_name or i.id))        
+
+        if wait_termination:
+            log.info('Waiting for instances termination...')
+        termination_timeout = wait_timeout_minutes*60
+        termination_start = time.time()
+
+        while wait_termination and all_instances and time.time() < termination_start+termination_timeout:
+            all_instances = [i for i in all_instances if i.state != 'terminated']
+            time.sleep(5)
+            for i in all_instances:
+                i.update()
+        # The log says the destruction is Done but is still running, just chill and enjoy the ride
+        log.info('Done.')
 
 
 def get_master(cluster_name, region=default_region):
     masters = get_masters(cluster_name, region=region)
     if not masters:
         raise CommandError("No master on {}".format(cluster_name))
-    return masters[0].public_dns_name
+    return masters[0].public_dns_name or masters[0].private_dns_name
 
 
 def ssh_master(cluster_name, key_file=default_key_file, user=default_remote_user, region=default_region, *args):
     master = get_master(cluster_name, region=region)
     ssh_call(user=user, host=master, key_file=key_file, args=args)
+
+
+def exec_shell(cluster_name, command, key_file=default_key_file, user=default_remote_user, region=default_region, sudo=False):
+    import subprocess
+    masters, slaves = get_active_nodes(cluster_name, region=region)
+    if not masters:
+         log.warn('No master found')
+    for node in masters + slaves:
+        host = node.public_dns_name or node.private_dns_name
+        log.info("exec output of host %s\n", host)
+        cmd = ['ssh', '-t', '-o', 'StrictHostKeyChecking=no', user + '@' + host  ,'-i', key_file]
+        if sudo:
+            cmd += ['sudo']
+        cmd += ['bash']
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        p.communicate(command.encode('utf-8'))
+        if p.wait() != 0:
+            log.warn('\nError executing command on host: %s', host)
 
 
 def rsync_call(user, host, key_file, args=[], src_local='', dest_local='', remote_path='', tries=3):
@@ -349,7 +470,8 @@ def build_assembly():
 def get_assembly_path():
     paths = glob.glob(get_project_path() + '/target/scala-*/*assembly*.jar')
     if paths:
-        return paths[0]
+        paths.sort(key=os.path.getmtime)
+        return paths[-1]
     else:
         return None
 
@@ -359,6 +481,8 @@ def get_assembly_path():
 @arg('--disable-tmux', help='Do not use tmux. Warning: many features will not work without tmux. Use only if the tmux is missing on the master.')
 @arg('--detached', help='Run job in background, requires tmux')
 @arg('--destroy-cluster', help='Will destroy cluster after finishing the job')
+@arg('--extra', action='append', type=str, help='Additional arguments for the job in the format k=v')
+@arg('--disable-propagate-aws-credentials', help='Setting this to true will not propagate your AWS credentials from your environment to the master')
 @named('run')
 def job_run(cluster_name, job_name, job_mem,
             key_file=default_key_file, disable_tmux=False,
@@ -370,9 +494,13 @@ def job_run(cluster_name, job_name, job_mem,
             remote_control_dir = default_remote_control_dir,
             remote_path=None, master=None,
             disable_assembly_build=False,
-            run_tests=False,
             kill_on_failure=False,
-            destroy_cluster=False, region=default_region):
+            destroy_cluster=False,
+            region=default_region,
+            driver_heap_size=default_driver_heap_size,
+            remove_files=True,
+            disable_propagate_aws_credentials=False,
+            extra=[]):
 
     utc_job_date_example = '2014-05-04T13:13:10Z'
     if utc_job_date and len(utc_job_date) != len(utc_job_date_example):
@@ -383,20 +511,21 @@ def job_run(cluster_name, job_name, job_mem,
 
     project_path = get_project_path()
     project_name = os.path.basename(project_path)
-    module_name = os.path.basename(get_module_path())
     # Use job user on remote path to avoid too many conflicts for different local users
     remote_path = remote_path or '/home/%s/%s.%s' % (default_remote_user, job_user, project_name)
     remote_hook_local = '{module_path}/remote_hook.sh'.format(module_path=get_module_path())
     remote_hook = '{remote_path}/remote_hook.sh'.format(remote_path=remote_path)
     notify_param = 'yes' if notify_on_errors else 'no'
     yarn_param = 'yes' if yarn else 'no'
+    aws_vars = get_aws_keys_str() if not disable_propagate_aws_credentials else ''
     job_date = utc_job_date or datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
     job_tag = job_tag or job_date.replace(':', '_').replace('-', '_').replace('Z', 'UTC')
+    runner_extra_args = ' '.join('--runner-extra "%s"' % arg for arg in extra)
     tmux_wait_command = ';(echo Press enter to keep the session open && /bin/bash -c "read -t 5" && sleep 7d)' if not detached else ''
-    tmux_arg = ". /etc/profile; . ~/.profile;tmux new-session {detached} -s spark.{job_name}.{job_tag} '{aws_vars} {remote_hook} {job_name} {job_date} {job_tag} {job_user} {remote_control_dir} {spark_mem} {yarn_param} {notify_param} {tmux_wait_command}' >& /tmp/commandoutput".format(
-        aws_vars=get_aws_keys_str(), job_name=job_name, job_date=job_date, job_tag=job_tag, job_user=job_user, remote_control_dir=remote_control_dir, remote_hook=remote_hook, spark_mem=job_mem, detached='-d' if detached else '', yarn_param=yarn_param, notify_param=notify_param, tmux_wait_command=tmux_wait_command)
-    non_tmux_arg = ". /etc/profile; . ~/.profile;{aws_vars} {remote_hook} {job_name} {job_date} {job_tag} {job_user} {remote_control_dir} {spark_mem} {yarn_param} {notify_param} >& /tmp/commandoutput".format(
-        aws_vars=get_aws_keys_str(), job_name=job_name, job_date=job_date, job_tag=job_tag, job_user=job_user, remote_control_dir=remote_control_dir, remote_hook=remote_hook, spark_mem=job_mem, yarn_param=yarn_param, notify_param=notify_param)
+    tmux_arg = ". /etc/profile; . ~/.profile;tmux new-session {detached} -s spark.{job_name}.{job_tag} '{aws_vars} {remote_hook} {job_name} {job_date} {job_tag} {job_user} {remote_control_dir} {spark_mem} {yarn_param} {notify_param} {driver_heap_size} {runner_extra_args} {tmux_wait_command}' >& /tmp/commandoutput".format(
+        aws_vars=aws_vars, job_name=job_name, job_date=job_date, job_tag=job_tag, job_user=job_user, remote_control_dir=remote_control_dir, remote_hook=remote_hook, spark_mem=job_mem, detached='-d' if detached else '', yarn_param=yarn_param, notify_param=notify_param, driver_heap_size=driver_heap_size, runner_extra_args=runner_extra_args, tmux_wait_command=tmux_wait_command)
+    non_tmux_arg = ". /etc/profile; . ~/.profile;{aws_vars} {remote_hook} {job_name} {job_date} {job_tag} {job_user} {remote_control_dir} {spark_mem} {yarn_param} {notify_param} {driver_heap_size} {runner_extra_args} >& /tmp/commandoutput".format(
+        aws_vars=aws_vars, job_name=job_name, job_date=job_date, job_tag=job_tag, job_user=job_user, remote_control_dir=remote_control_dir, remote_hook=remote_hook, spark_mem=job_mem, yarn_param=yarn_param, notify_param=notify_param, driver_heap_size=driver_heap_size, runner_extra_args=runner_extra_args)
 
 
     if not disable_assembly_build:
@@ -421,6 +550,9 @@ def job_run(cluster_name, job_name, job_mem,
                src_local=remote_hook_local,
                remote_path=with_leading_slash(remote_path))
 
+    if job_name == "zeppelin":
+         webbrowser.open("http://{master}:8081".format(master=master))
+
     log.info('Will run job in remote host')
     if disable_tmux:
         ssh_call(user=remote_user, host=master, key_file=key_file, args=[non_tmux_arg], allocate_terminal=False)
@@ -428,6 +560,7 @@ def job_run(cluster_name, job_name, job_mem,
         ssh_call(user=remote_user, host=master, key_file=key_file, args=[tmux_arg], allocate_terminal=True)
 
     if wait_completion:
+        time.sleep(5) # wait job to set up before checking it
         failed = False
         failed_exception = None
         try:
@@ -436,7 +569,7 @@ def job_run(cluster_name, job_name, job_mem,
                          region=region,
                          job_timeout_minutes=job_timeout_minutes,
                          remote_user=remote_user, remote_control_dir=remote_control_dir,
-                         collect_results_dir=collect_results_dir)
+                         collect_results_dir=collect_results_dir, remove_files=remove_files)
         except JobFailure as e:
             failed = True
             failed_exception = e
@@ -467,6 +600,82 @@ def job_run(cluster_name, job_name, job_mem,
             raise failed_exception or Exception('Failed!?')
     return (job_name, job_tag)
 
+@argh.arg('-c', '--conf', action='append', type=str)
+@arg('job-mem', help='The amount of memory to use for this job (like: 80G)')
+@named('local-yarn-run')
+def job_local_yarn_run(job_name, job_mem, queue,
+            job_user=getpass.getuser(),
+            utc_job_date=None, job_tag=None,
+            disable_assembly_build=False,
+            executor_cores=5,
+            spark_submit='spark-submit',
+            deploy_mode='cluster',
+            yarn_memory_overhead=0.2,
+            driver_heap_size=default_driver_heap_size,
+            driver_java_options='-verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps',
+            conf=[]):
+
+    def parse_memory(s):
+        import re
+        match = re.match(r'([0-9]+)([a-zA-Z]+)', s)
+        if match is None or len(match.groups()) != 2:
+            raise Exception('Invalid memory size: ' + s)
+        return match.groups()
+
+    def calculate_overhead(s):
+        from math import ceil
+        (n, unit) = parse_memory(s)
+        return str(int(ceil(float(n) * yarn_memory_overhead))) + unit
+
+    driver_overhead = calculate_overhead(driver_heap_size)
+    executor_overhead = calculate_overhead(job_mem)
+
+    utc_job_date_example = '2014-05-04T13:13:10Z'
+    if utc_job_date and len(utc_job_date) != len(utc_job_date_example):
+        raise CommandError('UTC Job Date should be given as in the following example: {}'.format(utc_job_date_example))
+    
+    job_date = utc_job_date or datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+    job_tag = job_tag or job_date.replace(':', '_').replace('-', '_').replace('Z', 'UTC')
+    
+    if not disable_assembly_build:
+        build_assembly()
+
+    assembly_path = get_assembly_path()
+    if assembly_path is None:
+        raise Exception('Something is wrong: no assembly found')
+
+    
+    log.info('Will run job using local installation of yarn')
+    confs = [
+      spark_submit,
+      '--class', 'ignition.jobs.Runner',
+      '--master', 'yarn',
+      '--driver-java-options', driver_java_options,
+      '--deploy-mode', deploy_mode,
+      '--queue', queue,
+      '--conf', 'spark.executor.cores=' + str(executor_cores),
+      '--driver-memory', driver_heap_size,
+      '--conf', 'spark.yarn.am.memory=' + driver_heap_size,
+      '--executor-memory', job_mem,
+      '--conf', 'spark.yarn.am.memoryOverhead=' + driver_overhead,
+      '--conf', 'spark.driver.memoryOverhead=' + driver_overhead,
+      '--conf', 'spark.executor.memoryOverhead=' + executor_overhead
+    ]
+
+    for c in conf:
+        confs.extend(['--conf', c])
+
+    check_call(
+      confs + [
+        assembly_path,
+        job_name,
+        '--runner-master', 'yarn',
+        '--runner-executor-memory', job_mem,
+        '--runner-user', job_user,
+        '--runner-tag', job_tag,
+        '--runner-date', job_date
+    ])
+    
 
 @named('attach')
 def job_attach(cluster_name, key_file=default_key_file, job_name=None, job_tag=None,
@@ -483,15 +692,25 @@ def job_attach(cluster_name, key_file=default_key_file, job_name=None, job_tag=N
 class NotHealthyCluster(Exception): pass
 
 @named('health-check')
-def health_check(cluster_name, key_file=default_key_file, master=None, remote_user=default_remote_user, region=default_region):
-    master = master or get_master(cluster_name, region=region)
-    all_args = load_cluster_args(master, key_file, remote_user)
-    nslaves = int(all_args['slaves'])
-    minimum_percentage_healthy_slaves = all_args['minimum_percentage_healthy_slaves']
-    masters, slaves = get_active_nodes(cluster_name, region=region)
-    if nslaves == 0 or float(len(slaves)) / nslaves < minimum_percentage_healthy_slaves:
-        raise NotHealthyCluster('Not enough healthy slaves: {0}/{1}'.format(len(slaves), nslaves))
-
+def health_check(cluster_name, key_file=default_key_file, master=None, remote_user=default_remote_user, region=default_region, retries=3):
+    for i in range(retries):
+        try:
+            master = master or get_master(cluster_name, region=region)
+            all_args = load_cluster_args(master, key_file, remote_user)
+            nslaves = int(all_args['slaves'])
+            minimum_percentage_healthy_slaves = all_args['minimum_percentage_healthy_slaves']
+            masters, slaves = get_active_nodes(cluster_name, region=region)
+            if nslaves == 0 or float(len(slaves)) / nslaves < minimum_percentage_healthy_slaves:
+                raise NotHealthyCluster('Not enough healthy slaves: {0}/{1}'.format(len(slaves), nslaves))
+            if not masters:
+                raise NotHealthyCluster('No master found')
+        except NotHealthyCluster as e:
+            raise e
+        except Exception as e:
+            log.warning("Failed to check cluster health, cluster: %s, retries %s" % (cluster_name, i), exc_info=True)
+            if i >= retries - 1:
+                log.critical("Failed to check cluster health, cluster: %s, giveup!" % (cluster_name))
+                raise e
 
 class JobFailure(Exception): pass
 
@@ -513,21 +732,45 @@ def collect_job_results(cluster_name, job_name, job_tag,
                         region=default_region,
                         master=None, remote_user=default_remote_user,
                         remote_control_dir=default_remote_control_dir,
-                        collect_results_dir=default_collect_results_dir):
+                        collect_results_dir=default_collect_results_dir,
+                        remove_files=False):
     master = master or get_master(cluster_name, region=region)
 
     job_with_tag = get_job_with_tag(job_name, job_tag)
     job_control_dir = get_job_control_dir(remote_control_dir, job_with_tag)
 
+    # Keep the RUNNING file so we can kill the job if needed
+    args = ['--remove-source-files', '--exclude', 'RUNNING'] if remove_files else []
     rsync_call(user=remote_user,
                host=master,
-               # Keep the RUNNING file so we can kill the job if needed
-               args=['--remove-source-files', '--exclude', 'RUNNING'],
+               args=args,
                key_file=key_file,
                dest_local=with_leading_slash(collect_results_dir),
                remote_path=job_control_dir)
 
     return os.path.join(collect_results_dir, os.path.basename(job_control_dir))
+
+
+@named('collect-all-results')
+def collect_all_job_results(cluster_name,
+                            key_file=default_key_file,
+                            region=default_region,
+                            master=None, remote_user=default_remote_user,
+                            remote_control_dir=default_remote_control_dir,
+                            collect_results_dir=default_collect_results_dir,
+                            remove_files=False):
+    master = master or get_master(cluster_name, region=region)
+
+    # Keep the RUNNING file so we can kill the job if needed
+    args = ['--remove-source-files', '--exclude', 'RUNNING'] if remove_files else []
+    rsync_call(user=remote_user,
+               host=master,
+               args=args,
+               key_file=key_file,
+               dest_local=with_leading_slash(collect_results_dir),
+               remote_path=with_leading_slash(remote_control_dir))
+
+    return collect_results_dir
 
 
 @named('wait-for')
@@ -536,7 +779,7 @@ def wait_for_job(cluster_name, job_name, job_tag, key_file=default_key_file,
                  region=default_region,
                  remote_control_dir=default_remote_control_dir,
                  collect_results_dir=default_collect_results_dir,
-                 job_timeout_minutes=0, max_failures=5, seconds_to_sleep=60):
+                 job_timeout_minutes=0, max_failures=5, seconds_to_sleep=60, remove_files=True):
 
     master = master or get_master(cluster_name, region=region)
 
@@ -561,7 +804,7 @@ def wait_for_job(cluster_name, job_name, job_tag, key_file=default_key_file,
                                                key_file=key_file, region=region,
                                                master=master, remote_user=remote_user,
                                                remote_control_dir=remote_control_dir,
-                                               collect_results_dir=collect_results_dir)
+                                               collect_results_dir=collect_results_dir, remove_files=remove_files)
             log.info('Jobs results saved on: {}'.format(dest_log_dir))
             if show_tail:
                 output_log = os.path.join(dest_log_dir, 'output.log')
@@ -622,7 +865,7 @@ def wait_for_job(cluster_name, job_name, job_tag, key_file=default_key_file,
                 failures += 1
                 last_failure = 'Unexpected response: {}'.format(output)
             health_check(cluster_name=cluster_name, key_file=key_file, master=master, remote_user=remote_user, region=region)
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, ssl.SSLError) as e:
             failures += 1
             log.exception('Got exception')
             last_failure = 'Exception: {}'.format(e)
@@ -671,13 +914,36 @@ def killall_jobs(cluster_name, key_file=default_key_file,
             done >& /dev/null || true'''.format(remote_control_dir=remote_control_dir)
             ])
 
-
+def check_flintrock_installation():
+    try:
+        with open('/dev/null', 'w') as devnull:
+            call_ec2_script(['--help'], 1 , 1, stdout=devnull)
+    except:
+        setup = os.path.join(ec2_script_base_path(), 'setup.py')
+        if not os.path.exists(setup):
+            log.error('''
+Flintrock is missing (or the wrong version is being used).
+Check if you have checked out the submodule. Try:
+  git submode update --init --recursive
+Or checkout ignition with:
+  git clone --recursive ....
+''')
+        else:
+            log.error('''
+Some dependencies are missing. For an Ubuntu system, try the following:
+sudo apt-get install python3-yaml libyaml-dev python3-pip
+sudo python3 -m pip install -U pip packaging setuptools
+cd {flintrock}
+sudo pip3 install -r requirements/user.pip
+        '''.format(flintrock=ec2_script_base_path()))
+        sys.exit(1)
 
 
 parser = ArghParser()
-parser.add_commands([launch, destroy, get_master, ssh_master, tag_cluster_instances, health_check])
-parser.add_commands([job_run, job_attach, wait_for_job,
-                     kill_job, killall_jobs, collect_job_results], namespace="jobs")
+parser.add_commands([launch, destroy, get_master, ssh_master, tag_cluster_instances, health_check, exec_shell])
+parser.add_commands([job_run, job_local_yarn_run, job_attach, wait_for_job,
+                     kill_job, killall_jobs, collect_job_results, collect_all_job_results], namespace="jobs")
 
 if __name__ == '__main__':
+    check_flintrock_installation()
     parser.dispatch()
